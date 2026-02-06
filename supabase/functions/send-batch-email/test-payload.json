@@ -1,0 +1,56 @@
+{
+  "agent_email": "agent@abccollections.com",
+  "reply_to": "support@carynops.com",
+  "agency_name": "ABC Collections",
+  "subject": "Weekly Delinquent Members Report - January 2024",
+  "member_list": [
+    {
+      "name": "John Doe",
+      "amount_due": 1250.50,
+      "days_late": 45,
+      "member_id": "M12345"
+    },
+    {
+      "name": "Jane Smith",
+      "amount_due": 3500.00,
+      "days_late": 67,
+      "member_id": "M12346"
+    },
+    {
+      "name": "Bob Johnson",
+      "amount_due": 750.25,
+      "days_late": 30,
+      "member_id": "M12347"
+    },
+    {
+      "name": "Alice Williams",
+      "amount_due": 2100.00,
+      "days_late": 90,
+      "member_id": "M12348"
+    },
+    {
+      "name": "Michael Brown",
+      "amount_due": 5000.00,
+      "days_late": 120,
+      "member_id": "M12349"
+    },
+    {
+      "name": "Sarah Davis",
+      "amount_due": 890.75,
+      "days_late": 15,
+      "member_id": "M12350"
+    },
+    {
+      "name": "David Wilson",
+      "amount_due": 1650.00,
+      "days_late": 45,
+      "member_id": "M12351"
+    },
+    {
+      "name": "Emma Martinez",
+      "amount_due": 4200.50,
+      "days_late": 80,
+      "member_id": "M12352"
+    }
+  ]
+}
