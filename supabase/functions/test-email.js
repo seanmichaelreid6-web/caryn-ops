@@ -7,15 +7,15 @@
 const FUNCTION_URL = 'https://tvzzoocqsbkopddzowcu.supabase.co/functions/v1/send-batch-email';
 const ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InR2enpvb2Nxc2Jrb3BkZHpvd2N1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzAzNjc0OTEsImV4cCI6MjA4NTk0MzQ5MX0.5MjV50lTvzdVpSCTZnE_Xcu-bJWdA0v4kS4LUVWl9go';
 
-// Test payload
+// Test payload — Jennifer Goodman test case
 const payload = {
   agent_email: 'seanmichaelreid6@gmail.com',
   reply_to: 'scott.thomas@carynhealth.com',
   member_list: [
     {
-      name: 'Test Member',
-      amount_due: 100,
-      days_late: 30
+      name: 'Jennifer Goodman',
+      delinquent_days: 45,
+      agency_email: 'seanmichaelreid6@gmail.com'
     }
   ]
 };
@@ -38,10 +38,14 @@ async function testSendEmail() {
   console.log(`${colors.cyan}========================================${colors.reset}\n`);
 
   console.log(`${colors.yellow}Endpoint:${colors.reset} ${FUNCTION_URL}`);
-  console.log(`${colors.yellow}Recipient:${colors.reset} ${payload.agent_email}`);
-  console.log(`${colors.yellow}Reply-To:${colors.reset} ${payload.reply_to}\n`);
+  console.log(`${colors.yellow}Reply-To:${colors.reset} ${payload.reply_to}`);
+  console.log(`${colors.yellow}Members:${colors.reset}  ${payload.member_list.length}\n`);
 
-  console.log(`${colors.cyan}Sending request...${colors.reset}\n`);
+  payload.member_list.forEach((m, i) => {
+    console.log(`  ${colors.yellow}[${i + 1}]${colors.reset} ${m.name} → ${m.agency_email_address} (${m.delinquent_days} days late)`);
+  });
+
+  console.log(`\n${colors.cyan}Sending request...${colors.reset}\n`);
 
   try {
     const response = await fetch(FUNCTION_URL, {
@@ -59,11 +63,6 @@ async function testSendEmail() {
       console.log(`${colors.green}✓ SUCCESS (HTTP ${response.status})${colors.reset}\n`);
       console.log(`${colors.green}Response:${colors.reset}`);
       console.log(JSON.stringify(data, null, 2));
-      console.log(`\n${colors.green}Email sent successfully!${colors.reset}`);
-      console.log(`${colors.yellow}Email ID:${colors.reset} ${data.email_id}`);
-      console.log(`${colors.yellow}Recipient:${colors.reset} ${data.recipient}`);
-      console.log(`${colors.yellow}Member Count:${colors.reset} ${data.member_count}`);
-      console.log(`${colors.yellow}Total Amount:${colors.reset} $${data.total_amount}`);
     } else {
       console.log(`${colors.red}✗ FAILED (HTTP ${response.status})${colors.reset}\n`);
       console.log(`${colors.red}Error Response:${colors.reset}`);
@@ -77,63 +76,6 @@ async function testSendEmail() {
   }
 
   console.log(`\n${colors.cyan}========================================${colors.reset}`);
-}
-
-/**
- * Run multiple test scenarios
- */
-async function runAllTests() {
-  console.log(`${colors.cyan}========================================${colors.reset}`);
-  console.log(`${colors.cyan}Running All Test Scenarios${colors.reset}`);
-  console.log(`${colors.cyan}========================================${colors.reset}\n`);
-
-  // Test 1: Valid request with single member
-  console.log(`${colors.yellow}Test 1: Valid request with single member${colors.reset}`);
-  await testSendEmail();
-  await delay(2000);
-
-  // Test 2: Multiple members
-  console.log(`\n\n${colors.yellow}Test 2: Multiple members${colors.reset}`);
-  const multiMemberPayload = {
-    agent_email: 'sean.reid@carynhealth.com',
-    reply_to: 'scott.thomas@carynhealth.com',
-    agency_name: 'Caryn Health Collections',
-    subject: 'Test Email - Multiple Members',
-    member_list: [
-      {
-        name: 'John Doe',
-        amount_due: 1250.50,
-        days_late: 45,
-        member_id: 'M12345'
-      },
-      {
-        name: 'Jane Smith',
-        amount_due: 3500.00,
-        days_late: 67,
-        member_id: 'M12346'
-      },
-      {
-        name: 'Bob Johnson',
-        amount_due: 750.25,
-        days_late: 30,
-        member_id: 'M12347'
-      }
-    ]
-  };
-
-  await testWithPayload(multiMemberPayload);
-  await delay(2000);
-
-  // Test 3: Missing required field (should fail)
-  console.log(`\n\n${colors.yellow}Test 3: Missing required field (should fail)${colors.reset}`);
-  const invalidPayload = {
-    reply_to: 'scott.thomas@carynhealth.com',
-    member_list: [{ name: 'Test', amount_due: 100 }]
-  };
-
-  await testWithPayload(invalidPayload);
-
-  console.log(`\n${colors.cyan}All tests complete!${colors.reset}`);
 }
 
 /**
@@ -170,6 +112,56 @@ async function testWithPayload(customPayload) {
  */
 function delay(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+/**
+ * Run multiple test scenarios
+ */
+async function runAllTests() {
+  console.log(`${colors.cyan}========================================${colors.reset}`);
+  console.log(`${colors.cyan}Running All Test Scenarios${colors.reset}`);
+  console.log(`${colors.cyan}========================================${colors.reset}\n`);
+
+  // Test 1: Valid request with single member
+  console.log(`${colors.yellow}Test 1: Single member notification${colors.reset}`);
+  await testSendEmail();
+  await delay(2000);
+
+  // Test 2: Multiple members going to different agencies
+  console.log(`\n\n${colors.yellow}Test 2: Multiple members, different agencies${colors.reset}`);
+  const multiMemberPayload = {
+    reply_to: 'scott.thomas@carynhealth.com',
+    member_list: [
+      {
+        name: 'John Doe',
+        amount_due: 1250.50,
+        delinquent_days: 45,
+        agency_email_address: 'seanmichaelreid6@gmail.com',
+        member_id: 'M12345'
+      },
+      {
+        name: 'Jane Smith',
+        amount_due: 3500.00,
+        delinquent_days: 67,
+        agency_email_address: 'seanmichaelreid6@gmail.com',
+        member_id: 'M12346'
+      }
+    ]
+  };
+
+  await testWithPayload(multiMemberPayload);
+  await delay(2000);
+
+  // Test 3: Missing required field (should fail)
+  console.log(`\n\n${colors.yellow}Test 3: Missing delinquent_days (should fail)${colors.reset}`);
+  const invalidPayload = {
+    reply_to: 'scott.thomas@carynhealth.com',
+    member_list: [{ name: 'Test', amount_due: 100, agency_email_address: 'test@test.com' }]
+  };
+
+  await testWithPayload(invalidPayload);
+
+  console.log(`\n${colors.cyan}All tests complete!${colors.reset}`);
 }
 
 /**
