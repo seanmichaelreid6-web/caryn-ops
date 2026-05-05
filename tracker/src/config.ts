@@ -21,9 +21,30 @@ function loadDotEnv(file: string): void {
 }
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-const projectRoot = path.resolve(here, "..");
+const projectRoot = findProjectRoot(here);
 loadDotEnv(path.join(projectRoot, ".env"));
 loadDotEnv(path.join(projectRoot, ".env.local"));
+
+function findProjectRoot(start: string): string {
+  // Walk up from the importing file looking for the tracker package.json.
+  // This works in both source mode (src/config.ts) and bundled mode where
+  // electron-vite emits main/preload to out/main/main.js — the bundle is
+  // at out/main/, but tracker/package.json is two levels up.
+  let dir = start;
+  while (dir !== path.dirname(dir)) {
+    const pkg = path.join(dir, "package.json");
+    if (fs.existsSync(pkg)) {
+      try {
+        const parsed = JSON.parse(fs.readFileSync(pkg, "utf8")) as { name?: string };
+        if (parsed.name === "caryn-ops-tracker") return dir;
+      } catch {
+        // ignore, keep walking
+      }
+    }
+    dir = path.dirname(dir);
+  }
+  return path.resolve(start, "..");
+}
 
 const Schema = z.object({
   ATLASSIAN_SITE: z.string().min(1),
