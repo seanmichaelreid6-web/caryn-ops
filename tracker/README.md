@@ -1,121 +1,126 @@
 # caryn-ops/tracker
 
-Master project tracker. Ingests three sources, maps each activity to a
-Confluence page via a fuzzy lookup against `Confluence_Pages_Directory.docx`,
-and pushes a daily "Status Update" block + new attachments to the right page.
+Desktop app + CLI that ingests `.msg` emails (and chat transcripts), routes
+each one to a Confluence page using a fuzzy match against
+`Confluence_Pages_Directory.docx`, and uses Claude to draft three reusable
+artifacts — Confluence status update, Jira action items, stakeholder email
+reply — that you can copy or push to Confluence with one click.
 
-## Inputs
+```
+   data/inbox/*.msg          ┐
+   data/transcripts/*.md     ├─►  per-email folder under data/projects/<subject>/
+   data/attachments/*        ┘    ├── <subject>.msg
+                                  ├── attachments/   (extracted from .msg)
+                                  ├── context.json   (parsed metadata + body + mapping)
+                                  └── synthesis.json (Claude's 3 outputs, cached)
+                                            │
+                                            ▼
+                              ┌─ Copy buttons (Confluence / Jira / Email)
+                              └─ Push button → Confluence page (status panel + attachments)
+```
 
-| Source | Path (env var) | Notes |
-| --- | --- | --- |
-| Curated chat transcripts | `TRANSCRIPTS_DIR` | `.md`, `.txt`, or `.json` |
-| Outlook `.msg` + attachments | `MSG_DIR` | Embedded attachments are extracted to `ATTACHMENTS_DIR/<msg-stem>/` |
-| Standalone attachment folders | `ATTACHMENTS_DIR` | First sub-folder name acts as a project hint |
-| Confluence Pages Directory | `DIRECTORY_DOCX` | `.docx` (or `.txt`/`.md` fallback) |
+## What the app gives you
 
-## Outputs
+- **Drop zone** for `.msg` files. Drag from Outlook or pick a file.
+- **Recent list** with status icons, attachment chips, and the resolved project.
+- **Synthesis modal** with three sections, each independently copyable.
+- **Manual push to Confluence** — the panel only goes live when you click.
+- **Per-email folder layout** so attachments stay tied to the email they came with.
 
-- `data/state/project_index.json` — parsed directory + aliases.
-- `data/state/daily_tracking.json` — append-only master log of every event,
-  with mapped project + sync state.
-- Confluence page updates — a `Status Update — YYYY-MM-DD` info panel,
-  prepended to the page body and idempotent on re-runs.
-- Confluence attachments — uploaded with comment `tracker-sha256:<hash>`,
-  which is how we dedupe across runs.
+## Quick start
 
-## Setup
-
-```bash
+```powershell
+# 1. Install deps (once)
 cd tracker
 npm install
-cp .env.example .env
-# Fill in ATLASSIAN_API_TOKEN (https://id.atlassian.com/manage-profile/security/api-tokens)
-# Drop your Confluence_Pages_Directory.docx into ./data/
+
+# 2. Configure
+copy .env.example .env
+# Fill in ATLASSIAN_API_TOKEN and ANTHROPIC_API_KEY in .env, then close it.
+
+# 3. Drop your real Confluence_Pages_Directory.docx into ./data/
+
+# 4. Run the desktop app
+npm run dev
 ```
+
+The first thing the app does is start watching `data/inbox/`. Drop a `.msg`
+there — or onto the app's drop zone — and within ~1 second a new project
+folder appears under `data/projects/<subject>/`.
+
+## The flow inside the app
+
+1. **Ingest.** A `.msg` lands in the inbox. The watcher extracts the email,
+   pulls every attachment into `data/projects/<subject>/attachments/`, and
+   writes a `context.json` with the parsed body, sender, recipients, and
+   attachment hashes.
+2. **Map.** The fuzzy matcher resolves the subject + sender + recipients
+   against the routing table in `Confluence_Pages_Directory.docx`. The result
+   is shown as a green chip ("→ ICHRA Carrier Onboarding") or, if no match,
+   an orange "unmapped" chip — at which point you'd add an `(aka …)` alias to
+   the directory and click Rebuild.
+3. **Synthesize.** Click "Draft update" on a row. The app calls Claude with
+   the email body + the routing table cached in the system prompt (so the
+   second-onwards call costs ~10× less). Output is three blocks:
+   - Confluence Status — markdown bullets for the page panel.
+   - Jira Action Items — a list of `{title, description, projectHint}` objects.
+   - Stakeholder Email — a draft reply in your voice.
+4. **Copy or push.** Each block has a Copy button. The Confluence Status block
+   also has a "Push to Confluence" button — that's the only thing in the
+   product that writes externally. It updates the resolved page with a
+   `Status Update — YYYY-MM-DD` panel and uploads any attachments not already
+   on the page (deduped by sha256 stored in the upload `comment`).
+
+Re-running synthesis is fine — it appends to the front of `syntheses[]` in
+`context.json`. Re-pushing the same day is also idempotent (the prior
+same-day panel is replaced, not stacked).
 
 ## Verification
 
-The Atlassian connection has two layers:
+Run the connection check before relying on the push button:
 
-1. **MCP layer** — `carynhealth.atlassian.net` (cloudId
-   `6347e5f2-420c-4290-a4d0-c0adb614e411`) is already wired through the
-   Atlassian MCP connector, with `read:page:confluence`,
-   `write:page:confluence`, and `read:space:confluence` scopes.
-   This is what Claude uses for ad-hoc reads/writes during development.
-2. **REST layer** — the backend itself uses `email + API token` Basic auth
-   against the Confluence Cloud REST API v2 so it can run on a schedule
-   without an interactive Claude session.
-
-Run the verifier:
-
-```bash
+```powershell
 npm run verify
 ```
 
-Expected output ends with `✔ Confluence REST reachable. Authenticated as <you>.`.
-If it errors, the most common causes are:
+Ends with `✔ Confluence REST reachable. Authenticated as <you>.` on success.
+The Atlassian MCP connector that the IDE uses is a separate auth path; this
+verifier proves the desktop app's REST call will work too.
 
-- Empty `ATLASSIAN_API_TOKEN` — generate one and re-export.
-- Token mismatched against `ATLASSIAN_EMAIL` — must be the same account.
-- 401/403 — your Confluence permissions don't include the target space.
+## Claude details
 
-## Daily flow
+- **Model:** `claude-opus-4-7` (latest Opus). Adaptive thinking only —
+  `temperature` and `budget_tokens` are not used.
+- **Prompt caching:** The system prompt (your role, the 56-entry routing
+  table, your writing style guide) is marked `cache_control: ephemeral`.
+  First call writes the cache (~1.25× cost), subsequent calls within 5
+  minutes read it (~0.1× cost). The `cache hit: N tok` chip in the modal
+  shows when this is working.
+- **Structured output:** Uses `client.messages.parse()` with a Zod schema —
+  the response is validated end-to-end and lands in `parsed_output` typed.
 
-```bash
-npm run index    # rebuild fuzzy index from the .docx
-npm run ingest   # transcripts + .msg + attachments → daily_tracking.json
-npm run sync     # push status blocks + attachments to Confluence
-# or do it all on a timer:
-npm run loop -- 600000   # every 10 minutes
+## CLI mode (legacy)
+
+The original CLI commands still work for headless usage:
+
+```powershell
+npm run verify         # Confluence connection check
+npm run index          # Rebuild fuzzy routing table from .docx
+npm run -- match "Re: ICHRA carrier sync"   # Test a title
+npm run ingest         # Batch-ingest transcripts/.msg/attachments → daily_tracking.json
+npm run sync [day]     # Push aggregated daily panels to Confluence
+npm run loop -- 600000 # Run ingest+sync every 10 minutes
 ```
 
-## Mapping nuanced meeting titles
-
-The matcher runs three passes in order:
-
-1. **Exact (normalized)** — case/punctuation/date-insensitive equality.
-2. **Token overlap** — useful when titles are wrapped in noise like
-   `"Re: ICHRA Carrier Onboarding — weekly sync 2025-05-01"`. Stop-words
-   (`weekly`, `sync`, `re:`, `1:1`, dates, …) are stripped before scoring.
-3. **Fuzzy** — Fuse.js across the title + every alias from the directory,
-   gated by `FUZZY_THRESHOLD` (default `0.42`).
-
-When a title still doesn't match, run:
-
-```bash
-npm run -- match "Re: weird title"
-```
-
-If it returns nothing, add an alias to the directory entry, e.g.:
-
-```
-ICHRA Carrier Onboarding — https://…/pages/60588040 (aka ICHRA Onboarding; Carrier Onboarding; weird title)
-```
-
-…and re-run `npm run index`.
-
-## Status block format
-
-Each sync prepends an info panel like:
-
-```
-ℹ Status Update — 2025-05-01
-   Aggregated from 3 activity event(s) by caryn-ops/tracker.
-   • 14:00 · Transcript — kickoff (Sean, Manoj)
-   • 16:00 · Email — follow-up email
-   • 17:30 · Attachment — 2 attachment(s)  [purple status lozenge]
-   Generated 2025-05-01T18:02:11.000Z
-```
-
-Re-running the sync for the same day overwrites the prior block instead
-of stacking duplicates.
+CLI mode predates the desktop app and is still fine for unattended hosts.
+The desktop app uses the same shared library (`src/`), so the matcher and
+Confluence client are identical between the two paths.
 
 ## Tests
 
-```bash
+```powershell
 npm test
 ```
 
 Covers the fuzzy matcher (token overlap, alias hit, fuzzy fallback,
-no-match) and the synthesis/merge logic (block emission + idempotent
-re-merge).
+no-match) and the synthesis-block merge (idempotent re-merge).

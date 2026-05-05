@@ -1,34 +1,44 @@
 {
   "name": "caryn-ops-tracker",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
-  "description": "Master project tracker: ingests transcripts, .msg attachments, and a Confluence page directory, then syncs daily synthesis blocks to the right Confluence pages.",
-  "type": "module",
-  "bin": {
-    "tracker": "./dist/cli.js"
-  },
+  "description": "Desktop tracker: ingests .msg emails, routes them via fuzzy match against Confluence Pages Directory, drafts Confluence/Jira/email synthesis with Claude, and pushes status updates to Confluence on demand.",
+  "main": "out/main/main.js",
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "dev": "electron-vite dev",
+    "build": "electron-vite build",
+    "start": "electron-vite preview",
     "verify": "tsx src/cli.ts verify",
     "index": "tsx src/cli.ts index",
     "ingest": "tsx src/cli.ts ingest",
     "sync": "tsx src/cli.ts sync",
     "loop": "tsx src/cli.ts loop",
-    "test": "node --test --import tsx --test-reporter=spec test/**/*.test.ts"
+    "test": "node --test --import tsx --test-reporter=spec test/**/*.test.ts",
+    "typecheck": "tsc -p tsconfig.lib.json --noEmit && tsc -p tsconfig.electron.json --noEmit && tsc -p ui/tsconfig.json --noEmit"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.93.0",
+    "@kenjiuno/msgreader": "^1.28.0",
+    "chokidar": "^4.0.1",
     "fuse.js": "^7.0.0",
     "mammoth": "^1.8.0",
-    "@kenjiuno/msgreader": "^1.28.0",
     "undici": "^6.21.0",
     "yargs": "^17.7.2",
     "zod": "^3.23.8"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
     "@types/yargs": "^17.0.33",
+    "@vitejs/plugin-react": "^4.3.3",
+    "electron": "^33.0.0",
+    "electron-vite": "^2.3.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
     "tsx": "^4.19.2",
-    "typescript": "^5.6.3"
+    "typescript": "^5.6.3",
+    "vite": "^5.4.10"
   },
   "engines": {
     "node": ">=20"
