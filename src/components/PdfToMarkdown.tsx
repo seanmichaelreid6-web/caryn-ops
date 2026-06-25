@@ -1,11 +1,16 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { useDropzone } from 'react-dropzone';
 import * as pdfjsLib from 'pdfjs-dist';
 import workerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
-import { Upload, FileText, Download, Copy, Check, Loader2, X } from 'lucide-react';
+import {
+  Upload, FileText, Download, Copy, Check, Loader2, X,
+  ChevronDown, ChevronUp, Plus, Trash2,
+} from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = workerUrl;
+
+// ── Types ─────────────────────────────────────────────────────────────────────
 
 interface PdfTextItem {
   str: string;
@@ -23,6 +28,15 @@ interface TextLine {
   x: number;
 }
 
+interface Correction {
+  id: string;
+  find: string;
+  replace: string;
+  enabled: boolean;
+}
+
+// ── PDF extraction ─────────────────────────────────────────────────────────────
+
 function groupItemsIntoLines(items: PdfTextItem[]): TextLine[] {
   if (items.length === 0) return [];
 
@@ -32,42 +46,35 @@ function groupItemsIntoLines(items: PdfTextItem[]): TextLine[] {
   let groupY = sorted[0].transform[5];
 
   const flush = () => {
-    // Drop zero-width filler items: the PDF emits empty-string text items
-    // between glyph runs, which would otherwise sit between the avatar letter
-    // and the speaker name and defeat the de-duplication below.
-    const items = group
+    // Drop zero-width filler items that the PDF emits between glyph runs.
+    const its = group
       .filter(it => it.str.length > 0)
       .sort((a, b) => a.transform[4] - b.transform[4]);
-    if (items.length === 0) return;
+    if (its.length === 0) return;
 
-    // Remove avatar initials: Otter.ai renders each speaker's first letter in a
-    // colored circle in the left margin, stored as a separate single-letter text
-    // item at the same vertical position as the speaker name. Detected when the
-    // leftmost item is one uppercase letter, separated by a wide gap from the
-    // next item, which starts with that same letter (e.g. "A" + "Amani" → drop
-    // the "A", keep "Amani" — instead of producing "AAmani").
+    // Remove avatar initials (e.g. Otter.ai colored circles): a single uppercase
+    // letter sitting to the left of a name that starts with the same letter,
+    // separated by a large x-gap.  "A" + "Amani" → keep only "Amani".
     let start = 0;
     if (
-      items.length > 1 &&
-      items[0].str.length === 1 &&
-      /^[A-Z]$/.test(items[0].str) &&
-      items[1].str.startsWith(items[0].str)
+      its.length > 1 &&
+      its[0].str.length === 1 &&
+      /^[A-Z]$/.test(its[0].str) &&
+      its[1].str.startsWith(its[0].str)
     ) {
-      const itemRight = items[0].transform[4] + (items[0].width || items[0].height);
-      const nextLeft = items[1].transform[4];
-      if (nextLeft - itemRight > (items[0].width || items[0].height) * 1.5) {
+      const itemRight = its[0].transform[4] + (its[0].width || its[0].height);
+      const nextLeft = its[1].transform[4];
+      if (nextLeft - itemRight > (its[0].width || its[0].height) * 1.5) {
         start = 1;
       }
     }
 
-    const relevant = items.slice(start);
-    const heights = relevant.map(it => it.height).filter(h => h > 0);
-    const maxHeight = heights.length ? Math.max(...heights) : 12;
-    const minX = Math.min(...relevant.map(it => it.transform[4]));
-    const text = relevant.map(it => it.str).join('').trim();
-    if (text) {
-      lines.push({ y: groupY, height: maxHeight, text, x: minX });
-    }
+    const rel = its.slice(start);
+    const hs = rel.map(it => it.height).filter(h => h > 0);
+    const maxHeight = hs.length ? Math.max(...hs) : 12;
+    const minX = Math.min(...rel.map(it => it.transform[4]));
+    const text = rel.map(it => it.str).join('').trim();
+    if (text) lines.push({ y: groupY, height: maxHeight, text, x: minX });
   };
 
   for (let i = 1; i < sorted.length; i++) {
@@ -82,32 +89,23 @@ function groupItemsIntoLines(items: PdfTextItem[]): TextLine[] {
     }
   }
   flush();
-
   return lines;
 }
 
-// Speaker turn header, e.g. "Amani 00:42", "Sean-Michael 09:31", "Speaker 1 08:34".
-// Name part: starts with a letter, no commas/colons (so date lines don't match).
+// Speaker turn: "Amani 00:42", "Sean-Michael 09:31", "Speaker 1 08:34"
 const SPEAKER_RE = /^([A-Za-z][A-Za-z0-9 .'-]{0,38})\s+(\d{1,2}:\d{2})$/;
-// A line that is only a timestamp (a speaker turn whose name didn't render).
 const TIME_ONLY_RE = /^\d{1,2}:\d{2}$/;
 
 function linesToMarkdown(allPageLines: TextLine[][]): string {
-  // Median line height represents body text; genuine headings are notably larger.
   const heights: number[] = [];
-  for (const lines of allPageLines) {
-    for (const line of lines) {
+  for (const lines of allPageLines)
+    for (const line of lines)
       if (line.text && line.height > 0) heights.push(line.height);
-    }
-  }
   heights.sort((a, b) => a - b);
   const median = heights[Math.floor(heights.length * 0.5)] ?? 12;
 
   const sections: string[] = [];
-  // Emit a block-level element surrounded by blank lines (collapsed later).
-  const pushBlock = (s: string) => {
-    sections.push('', s, '');
-  };
+  const pushBlock = (s: string) => { sections.push('', s, ''); };
 
   for (const lines of allPageLines) {
     let prevY: number | null = null;
@@ -115,17 +113,13 @@ function linesToMarkdown(allPageLines: TextLine[][]): string {
     let paragraph: string[] = [];
 
     const flushParagraph = () => {
-      if (paragraph.length > 0) {
-        sections.push(paragraph.join(' '));
-        paragraph = [];
-      }
+      if (paragraph.length > 0) { sections.push(paragraph.join(' ')); paragraph = []; }
     };
 
     for (const line of lines) {
       const text = line.text;
       if (!text) continue;
 
-      // Large vertical gap between consecutive lines = new paragraph.
       let gapBreak = false;
       if (prevY !== null) {
         const gap = prevY - line.y;
@@ -134,10 +128,8 @@ function linesToMarkdown(allPageLines: TextLine[][]): string {
 
       const speaker = SPEAKER_RE.exec(text);
       const isHeading = !speaker && line.height > median * 1.4;
-      // All-caps section labels like "SUMMARY KEYWORDS", "SPEAKERS".
       const isLabel =
-        !speaker &&
-        !isHeading &&
+        !speaker && !isHeading &&
         text.length <= 40 &&
         /^[A-Z][A-Z0-9 &/.,'-]+$/.test(text) &&
         text === text.toUpperCase();
@@ -168,7 +160,6 @@ function linesToMarkdown(allPageLines: TextLine[][]): string {
       prevY = line.y;
       prevHeight = line.height;
     }
-
     flushParagraph();
   }
 
@@ -197,26 +188,70 @@ async function pdfFileToMarkdown(
   return linesToMarkdown(allPageLines);
 }
 
+// ── Corrections ────────────────────────────────────────────────────────────────
+
+const STORAGE_KEY = 'pdf-md-corrections';
+
+function loadCorrections(): Correction[] {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (raw) return JSON.parse(raw) as Correction[];
+  } catch { /* ignore */ }
+  return [];
+}
+
+function saveCorrections(corrections: Correction[]) {
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(corrections));
+}
+
+function applyCorrections(text: string, corrections: Correction[]): string {
+  let result = text;
+  for (const c of corrections) {
+    if (!c.enabled || !c.find.trim()) continue;
+    const escaped = c.find.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    result = result.replace(new RegExp(escaped, 'gi'), c.replace);
+  }
+  return result;
+}
+
+function newCorrection(): Correction {
+  return { id: `${Date.now()}-${Math.random()}`, find: '', replace: '', enabled: true };
+}
+
+// ── Component ──────────────────────────────────────────────────────────────────
+
 type Status = 'idle' | 'processing' | 'done' | 'error';
 
 export default function PdfToMarkdown() {
   const [status, setStatus] = useState<Status>('idle');
   const [progress, setProgress] = useState({ page: 0, total: 0 });
   const [fileName, setFileName] = useState('');
-  const [markdown, setMarkdown] = useState('');
+  const [rawMarkdown, setRawMarkdown] = useState('');   // straight from PDF
+  const [markdown, setMarkdown] = useState('');          // with corrections applied
   const [error, setError] = useState('');
   const [copied, setCopied] = useState(false);
+
+  const [corrections, setCorrections] = useState<Correction[]>(loadCorrections);
+  const [showCorrections, setShowCorrections] = useState(false);
+
+  // Persist corrections and re-apply whenever they change.
+  useEffect(() => {
+    saveCorrections(corrections);
+    if (rawMarkdown) setMarkdown(applyCorrections(rawMarkdown, corrections));
+  }, [corrections, rawMarkdown]);
 
   const process = useCallback(async (file: File) => {
     setFileName(file.name);
     setStatus('processing');
+    setRawMarkdown('');
     setMarkdown('');
     setError('');
     try {
       const md = await pdfFileToMarkdown(file, (page, total) =>
         setProgress({ page, total }),
       );
-      setMarkdown(md);
+      setRawMarkdown(md);
+      // corrections effect fires immediately after rawMarkdown state update
       setStatus('done');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to parse PDF');
@@ -248,10 +283,20 @@ export default function PdfToMarkdown() {
 
   const reset = () => {
     setStatus('idle');
+    setRawMarkdown('');
     setMarkdown('');
     setFileName('');
     setError('');
   };
+
+  const addCorrection = () =>
+    setCorrections(prev => [...prev, newCorrection()]);
+
+  const updateCorrection = (id: string, patch: Partial<Correction>) =>
+    setCorrections(prev => prev.map(c => (c.id === id ? { ...c, ...patch } : c)));
+
+  const removeCorrection = (id: string) =>
+    setCorrections(prev => prev.filter(c => c.id !== id));
 
   return (
     <div className="min-h-screen bg-gray-50 flex flex-col">
@@ -261,26 +306,37 @@ export default function PdfToMarkdown() {
       </header>
 
       <main className="flex-1 flex flex-col gap-6 p-6 max-w-5xl mx-auto w-full">
+
         {/* Drop zone */}
         {status === 'idle' && (
-          <div
-            {...getRootProps()}
-            className={cn(
-              'border-2 border-dashed rounded-xl p-12 flex flex-col items-center gap-4 cursor-pointer transition-colors',
-              isDragActive
-                ? 'border-blue-500 bg-blue-50'
-                : 'border-gray-300 bg-white hover:border-blue-400 hover:bg-gray-50',
-            )}
-          >
-            <input {...getInputProps()} />
-            <Upload className="w-12 h-12 text-gray-400" />
-            <div className="text-center">
-              <p className="text-lg font-medium text-gray-700">
-                {isDragActive ? 'Drop your PDF here' : 'Drag & drop a PDF'}
-              </p>
-              <p className="text-sm text-gray-500 mt-1">or click to browse</p>
+          <>
+            <div
+              {...getRootProps()}
+              className={cn(
+                'border-2 border-dashed rounded-xl p-12 flex flex-col items-center gap-4 cursor-pointer transition-colors',
+                isDragActive
+                  ? 'border-blue-500 bg-blue-50'
+                  : 'border-gray-300 bg-white hover:border-blue-400 hover:bg-gray-50',
+              )}
+            >
+              <input {...getInputProps()} />
+              <Upload className="w-12 h-12 text-gray-400" />
+              <div className="text-center">
+                <p className="text-lg font-medium text-gray-700">
+                  {isDragActive ? 'Drop your PDF here' : 'Drag & drop a PDF'}
+                </p>
+                <p className="text-sm text-gray-500 mt-1">or click to browse</p>
+              </div>
             </div>
-          </div>
+            <CorrectionsPanel
+              corrections={corrections}
+              show={showCorrections}
+              onToggle={() => setShowCorrections(v => !v)}
+              onAdd={addCorrection}
+              onUpdate={updateCorrection}
+              onRemove={removeCorrection}
+            />
+          </>
         )}
 
         {/* Processing */}
@@ -365,7 +421,7 @@ export default function PdfToMarkdown() {
             </div>
 
             <textarea
-              className="flex-1 min-h-[60vh] font-mono text-sm p-4 rounded-xl border border-gray-200 bg-white resize-y focus:outline-none focus:ring-2 focus:ring-blue-500"
+              className="flex-1 min-h-[50vh] font-mono text-sm p-4 rounded-xl border border-gray-200 bg-white resize-y focus:outline-none focus:ring-2 focus:ring-blue-500"
               value={markdown}
               onChange={e => setMarkdown(e.target.value)}
               spellCheck={false}
@@ -373,9 +429,106 @@ export default function PdfToMarkdown() {
             <p className="text-xs text-gray-400 text-right">
               {markdown.split('\n').length} lines · {markdown.length} chars · editable before download
             </p>
+
+            <CorrectionsPanel
+              corrections={corrections}
+              show={showCorrections}
+              onToggle={() => setShowCorrections(v => !v)}
+              onAdd={addCorrection}
+              onUpdate={updateCorrection}
+              onRemove={removeCorrection}
+            />
           </div>
         )}
       </main>
+    </div>
+  );
+}
+
+// ── Corrections panel ──────────────────────────────────────────────────────────
+
+interface CorrectionsPanelProps {
+  corrections: Correction[];
+  show: boolean;
+  onToggle: () => void;
+  onAdd: () => void;
+  onUpdate: (id: string, patch: Partial<Correction>) => void;
+  onRemove: (id: string) => void;
+}
+
+function CorrectionsPanel({
+  corrections, show, onToggle, onAdd, onUpdate, onRemove,
+}: CorrectionsPanelProps) {
+  const activeCount = corrections.filter(c => c.enabled && c.find.trim()).length;
+
+  return (
+    <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+      <button
+        onClick={onToggle}
+        className="w-full flex items-center justify-between px-4 py-3 text-sm font-medium text-gray-700 hover:bg-gray-50 transition-colors"
+      >
+        <span className="flex items-center gap-2">
+          Auto-corrections
+          {activeCount > 0 && (
+            <span className="text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full font-normal">
+              {activeCount} active
+            </span>
+          )}
+        </span>
+        {show ? <ChevronUp className="w-4 h-4 text-gray-400" /> : <ChevronDown className="w-4 h-4 text-gray-400" />}
+      </button>
+
+      {show && (
+        <div className="border-t border-gray-100 px-4 py-3 flex flex-col gap-2">
+          <p className="text-xs text-gray-500 mb-1">
+            Applied case-insensitively to every converted file. Saved automatically.
+          </p>
+
+          {corrections.length === 0 && (
+            <p className="text-xs text-gray-400 italic py-2">No corrections yet.</p>
+          )}
+
+          {corrections.map(c => (
+            <div key={c.id} className="flex items-center gap-2">
+              <input
+                type="checkbox"
+                checked={c.enabled}
+                onChange={e => onUpdate(c.id, { enabled: e.target.checked })}
+                className="w-4 h-4 rounded border-gray-300 text-blue-600 cursor-pointer flex-shrink-0"
+              />
+              <input
+                type="text"
+                placeholder="Find…"
+                value={c.find}
+                onChange={e => onUpdate(c.id, { find: e.target.value })}
+                className="flex-1 min-w-0 text-sm px-2 py-1.5 rounded-lg border border-gray-200 focus:outline-none focus:ring-2 focus:ring-blue-500 font-mono"
+              />
+              <span className="text-gray-400 text-sm flex-shrink-0">→</span>
+              <input
+                type="text"
+                placeholder="Replace with…"
+                value={c.replace}
+                onChange={e => onUpdate(c.id, { replace: e.target.value })}
+                className="flex-1 min-w-0 text-sm px-2 py-1.5 rounded-lg border border-gray-200 focus:outline-none focus:ring-2 focus:ring-blue-500 font-mono"
+              />
+              <button
+                onClick={() => onRemove(c.id)}
+                className="flex-shrink-0 p-1.5 rounded-lg text-gray-400 hover:text-red-500 hover:bg-red-50 transition-colors"
+              >
+                <Trash2 className="w-4 h-4" />
+              </button>
+            </div>
+          ))}
+
+          <button
+            onClick={onAdd}
+            className="mt-1 flex items-center gap-1.5 text-sm text-blue-600 hover:text-blue-700 self-start"
+          >
+            <Plus className="w-4 h-4" />
+            Add correction
+          </button>
+        </div>
+      )}
     </div>
   );
 }
