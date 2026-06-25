@@ -33,10 +33,31 @@ function groupItemsIntoLines(items: PdfTextItem[]): TextLine[] {
 
   const flush = () => {
     group.sort((a, b) => a.transform[4] - b.transform[4]);
-    const heights = group.map(it => it.height).filter(h => h > 0);
+
+    // Remove avatar initials: a single uppercase letter rendered inside a
+    // circle icon, positioned to the left of the speaker name it duplicates.
+    // Detected when: item is one uppercase char, has a gap wider than 1.5×
+    // its own width before the next item, and the next item starts with the
+    // same letter (e.g. "A" + "Amani" → skip "A", keep "Amani").
+    let start = 0;
+    if (
+      group.length > 1 &&
+      group[0].str.length === 1 &&
+      /^[A-Z]$/.test(group[0].str) &&
+      group[1].str.startsWith(group[0].str)
+    ) {
+      const itemRight = group[0].transform[4] + (group[0].width || group[0].height);
+      const nextLeft = group[1].transform[4];
+      if (nextLeft - itemRight > (group[0].width || group[0].height) * 1.5) {
+        start = 1;
+      }
+    }
+
+    const relevant = group.slice(start);
+    const heights = relevant.map(it => it.height).filter(h => h > 0);
     const maxHeight = heights.length ? Math.max(...heights) : 12;
-    const minX = Math.min(...group.map(it => it.transform[4]));
-    const text = group.map(it => it.str).join('').trim();
+    const minX = Math.min(...relevant.map(it => it.transform[4]));
+    const text = relevant.map(it => it.str).join('').trim();
     if (text) {
       lines.push({ y: groupY, height: maxHeight, text, x: minX });
     }
