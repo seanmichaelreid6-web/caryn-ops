@@ -32,28 +32,35 @@ function groupItemsIntoLines(items: PdfTextItem[]): TextLine[] {
   let groupY = sorted[0].transform[5];
 
   const flush = () => {
-    group.sort((a, b) => a.transform[4] - b.transform[4]);
+    // Drop zero-width filler items: the PDF emits empty-string text items
+    // between glyph runs, which would otherwise sit between the avatar letter
+    // and the speaker name and defeat the de-duplication below.
+    const items = group
+      .filter(it => it.str.length > 0)
+      .sort((a, b) => a.transform[4] - b.transform[4]);
+    if (items.length === 0) return;
 
-    // Remove avatar initials: a single uppercase letter rendered inside a
-    // circle icon, positioned to the left of the speaker name it duplicates.
-    // Detected when: item is one uppercase char, has a gap wider than 1.5×
-    // its own width before the next item, and the next item starts with the
-    // same letter (e.g. "A" + "Amani" → skip "A", keep "Amani").
+    // Remove avatar initials: Otter.ai renders each speaker's first letter in a
+    // colored circle in the left margin, stored as a separate single-letter text
+    // item at the same vertical position as the speaker name. Detected when the
+    // leftmost item is one uppercase letter, separated by a wide gap from the
+    // next item, which starts with that same letter (e.g. "A" + "Amani" → drop
+    // the "A", keep "Amani" — instead of producing "AAmani").
     let start = 0;
     if (
-      group.length > 1 &&
-      group[0].str.length === 1 &&
-      /^[A-Z]$/.test(group[0].str) &&
-      group[1].str.startsWith(group[0].str)
+      items.length > 1 &&
+      items[0].str.length === 1 &&
+      /^[A-Z]$/.test(items[0].str) &&
+      items[1].str.startsWith(items[0].str)
     ) {
-      const itemRight = group[0].transform[4] + (group[0].width || group[0].height);
-      const nextLeft = group[1].transform[4];
-      if (nextLeft - itemRight > (group[0].width || group[0].height) * 1.5) {
+      const itemRight = items[0].transform[4] + (items[0].width || items[0].height);
+      const nextLeft = items[1].transform[4];
+      if (nextLeft - itemRight > (items[0].width || items[0].height) * 1.5) {
         start = 1;
       }
     }
 
-    const relevant = group.slice(start);
+    const relevant = items.slice(start);
     const heights = relevant.map(it => it.height).filter(h => h > 0);
     const maxHeight = heights.length ? Math.max(...heights) : 12;
     const minX = Math.min(...relevant.map(it => it.transform[4]));
@@ -79,8 +86,14 @@ function groupItemsIntoLines(items: PdfTextItem[]): TextLine[] {
   return lines;
 }
 
+// Speaker turn header, e.g. "Amani 00:42", "Sean-Michael 09:31", "Speaker 1 08:34".
+// Name part: starts with a letter, no commas/colons (so date lines don't match).
+const SPEAKER_RE = /^([A-Za-z][A-Za-z0-9 .'-]{0,38})\s+(\d{1,2}:\d{2})$/;
+// A line that is only a timestamp (a speaker turn whose name didn't render).
+const TIME_ONLY_RE = /^\d{1,2}:\d{2}$/;
+
 function linesToMarkdown(allPageLines: TextLine[][]): string {
-  // Collect all heights for percentile-based heading detection
+  // Median line height represents body text; genuine headings are notably larger.
   const heights: number[] = [];
   for (const lines of allPageLines) {
     for (const line of lines) {
@@ -88,18 +101,17 @@ function linesToMarkdown(allPageLines: TextLine[][]): string {
     }
   }
   heights.sort((a, b) => a - b);
-  const p50 = heights[Math.floor(heights.length * 0.5)] ?? 12;
-  const p75 = heights[Math.floor(heights.length * 0.75)] ?? p50 * 1.2;
-  const p90 = heights[Math.floor(heights.length * 0.9)] ?? p50 * 1.5;
+  const median = heights[Math.floor(heights.length * 0.5)] ?? 12;
 
   const sections: string[] = [];
+  // Emit a block-level element surrounded by blank lines (collapsed later).
+  const pushBlock = (s: string) => {
+    sections.push('', s, '');
+  };
 
-  for (let pi = 0; pi < allPageLines.length; pi++) {
-    const lines = allPageLines[pi];
-    if (pi > 0) sections.push('\n---\n');
-
+  for (const lines of allPageLines) {
     let prevY: number | null = null;
-    let prevHeight = p50;
+    let prevHeight = median;
     let paragraph: string[] = [];
 
     const flushParagraph = () => {
@@ -113,27 +125,35 @@ function linesToMarkdown(allPageLines: TextLine[][]): string {
       const text = line.text;
       if (!text) continue;
 
-      // Paragraph gap detection: vertical distance exceeds 1.5× the smaller of the two line heights
+      // Large vertical gap between consecutive lines = new paragraph.
+      let gapBreak = false;
       if (prevY !== null) {
         const gap = prevY - line.y;
-        const threshold = Math.min(prevHeight, line.height) * 1.5;
-        if (gap > threshold) {
-          flushParagraph();
-          sections.push('');
-        }
+        if (gap > Math.min(prevHeight, line.height) * 1.5) gapBreak = true;
       }
 
-      // Heading detection by relative font size
-      const h = line.height;
-      if (h >= p90 * 0.95) {
+      const speaker = SPEAKER_RE.exec(text);
+      const isHeading = !speaker && line.height > median * 1.4;
+      // All-caps section labels like "SUMMARY KEYWORDS", "SPEAKERS".
+      const isLabel =
+        !speaker &&
+        !isHeading &&
+        text.length <= 40 &&
+        /^[A-Z][A-Z0-9 &/.,'-]+$/.test(text) &&
+        text === text.toUpperCase();
+
+      if (speaker) {
         flushParagraph();
-        sections.push(`# ${text}`);
-      } else if (h >= p75 * 0.95) {
+        pushBlock(`**${speaker[1].trim()}** (${speaker[2]})`);
+      } else if (TIME_ONLY_RE.test(text)) {
         flushParagraph();
-        sections.push(`## ${text}`);
-      } else if (h > p50 * 1.15) {
+        pushBlock(`**(${text})**`);
+      } else if (isHeading) {
         flushParagraph();
-        sections.push(`### ${text}`);
+        pushBlock(`# ${text}`);
+      } else if (isLabel) {
+        flushParagraph();
+        pushBlock(`## ${text}`);
       } else if (/^[•·▪▸►]\s*/.test(text)) {
         flushParagraph();
         sections.push(`- ${text.replace(/^[•·▪▸►]\s*/, '')}`);
@@ -141,6 +161,7 @@ function linesToMarkdown(allPageLines: TextLine[][]): string {
         flushParagraph();
         sections.push(text);
       } else {
+        if (gapBreak) flushParagraph();
         paragraph.push(text);
       }
 
