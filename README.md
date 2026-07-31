@@ -1,3 +1,12 @@
+# caryn-ops
+
+## Tools
+
+- **[Email PDF → Markdown converter](tools/README.md)** (`tools/email-pdf-to-markdown.html`) —
+  a drag-and-drop page that converts emails saved as PDFs into Markdown files
+  named `Subject - YYYY-MM-DD.md`. See [tools/README.md](tools/README.md) for
+  download and usage instructions.
+
 # React + TypeScript + Vite
 
 This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
