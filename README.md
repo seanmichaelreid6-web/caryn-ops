@@ -1,8 +1,10 @@
 # caryn-ops
 
 Home of the **Email PDF → Markdown converter** — a drag-and-drop tool that
-turns emails saved as PDFs into Markdown files named `Subject - YYYY-MM-DD.md`,
-dated to the latest message in the thread.
+files emails saved as PDFs into organized category folders. Each email gets its
+own folder named `Subject From Sender Month Day` with the Markdown conversion
+inside, ready for its attachments to be added alongside. Reads both normal and
+image-only PDFs (built-in OCR).
 
 - **The tool:** [`tools/email-pdf-to-markdown.html`](tools/email-pdf-to-markdown.html) —
   a single file that runs entirely in your web browser. Download it, double-click

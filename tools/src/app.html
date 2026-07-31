@@ -5,13 +5,13 @@
   :root {
     --bg: #f6f7f9; --card: #ffffff; --text: #1a2233; --muted: #5b6472;
     --accent: #2563eb; --accent-soft: #dbeafe; --border: #d8dde5;
-    --ok: #15803d; --err: #b91c1c;
+    --ok: #15803d; --err: #b91c1c; --warnbg: #fef3c7; --warntext: #92400e;
   }
   @media (prefers-color-scheme: dark) {
     :root {
       --bg: #12161d; --card: #1b212b; --text: #e7ebf1; --muted: #9aa4b2;
       --accent: #60a5fa; --accent-soft: #1e3a5f; --border: #313a47;
-      --ok: #4ade80; --err: #f87171;
+      --ok: #4ade80; --err: #f87171; --warnbg: #3a2f14; --warntext: #fbbf24;
     }
   }
   * { box-sizing: border-box; }
@@ -19,53 +19,84 @@
     margin: 0; padding: 2rem 1rem 4rem; background: var(--bg); color: var(--text);
     font: 16px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   }
-  main { max-width: 760px; margin: 0 auto; }
+  main { max-width: 820px; margin: 0 auto; }
   h1 { font-size: 1.6rem; margin: 0 0 .25rem; }
-  .sub { color: var(--muted); margin: 0 0 1.5rem; }
+  .sub { color: var(--muted); margin: 0 0 1.2rem; }
+  #folderBar {
+    display: flex; align-items: center; gap: .8rem; flex-wrap: wrap;
+    background: var(--card); border: 1px solid var(--border); border-radius: 12px;
+    padding: .8rem 1rem; margin-bottom: 1rem;
+  }
+  #folderBar .label { font-weight: 600; }
+  #folderBar .name { color: var(--ok); font-weight: 600; }
+  #folderBar .hint { color: var(--muted); font-size: .9rem; flex-basis: 100%; }
   #drop {
+    display: block;
     border: 2px dashed var(--border); border-radius: 14px; background: var(--card);
-    padding: 3rem 1.5rem; text-align: center; cursor: pointer;
+    padding: 2.6rem 1.5rem; text-align: center; cursor: pointer;
     transition: border-color .15s, background .15s;
   }
   #drop.over { border-color: var(--accent); background: var(--accent-soft); }
   #drop .big { font-size: 1.15rem; font-weight: 600; }
   #drop .hint { color: var(--muted); margin-top: .35rem; font-size: .95rem; }
   #drop input { display: none; }
-  #results { margin-top: 1.5rem; display: flex; flex-direction: column; gap: .9rem; }
+  #results { margin-top: 1.4rem; display: flex; flex-direction: column; gap: .9rem; }
   .card {
     background: var(--card); border: 1px solid var(--border); border-radius: 12px;
     padding: 1rem 1.2rem;
   }
-  .card h3 { margin: 0 0 .3rem; font-size: 1.05rem; overflow-wrap: anywhere; }
-  .card .meta { color: var(--muted); font-size: .9rem; overflow-wrap: anywhere; }
-  .card .meta b { color: var(--text); font-weight: 600; }
+  .card .meta { color: var(--muted); font-size: .9rem; overflow-wrap: anywhere; margin-bottom: .6rem; }
   .card.error { border-color: var(--err); }
   .card.error .status { color: var(--err); }
-  .status { font-size: .9rem; color: var(--ok); margin-top: .5rem; }
-  .warn { color: var(--muted); font-size: .85rem; margin-top: .35rem; }
-  .actions { margin-top: .75rem; display: flex; gap: .5rem; flex-wrap: wrap; }
+  .namerow { display: flex; gap: .5rem; flex-wrap: wrap; align-items: center; }
+  .namerow input[type=text] {
+    flex: 1 1 320px; font: inherit; font-size: .95rem; padding: .45rem .6rem;
+    border: 1px solid var(--border); border-radius: 8px; background: var(--bg); color: var(--text);
+  }
+  .saverow { display: flex; gap: .5rem; flex-wrap: wrap; align-items: center; margin-top: .6rem; }
+  select {
+    font: inherit; font-size: .92rem; padding: .45rem .6rem; border-radius: 8px;
+    border: 1px solid var(--border); background: var(--card); color: var(--text);
+  }
   button {
     font: inherit; font-size: .92rem; padding: .45rem .9rem; border-radius: 8px;
     border: 1px solid var(--border); background: var(--card); color: var(--text); cursor: pointer;
   }
   button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
   button:hover { filter: brightness(1.06); }
-  details { margin-top: .75rem; }
+  button:disabled { opacity: .5; cursor: not-allowed; }
+  .status { font-size: .92rem; color: var(--ok); margin-top: .55rem; min-height: 1.2em; }
+  .status.busy { color: var(--muted); }
+  .warn {
+    color: var(--warntext); background: var(--warnbg); font-size: .85rem;
+    margin-top: .4rem; padding: .35rem .6rem; border-radius: 6px;
+  }
+  details { margin-top: .65rem; }
   details summary { cursor: pointer; color: var(--muted); font-size: .9rem; }
   pre {
     background: var(--bg); border: 1px solid var(--border); border-radius: 8px;
     padding: .8rem; overflow-x: auto; font-size: .82rem; white-space: pre-wrap;
     overflow-wrap: anywhere; max-height: 24rem; overflow-y: auto;
   }
-  #downloadAll { margin-top: 1.2rem; display: none; }
   footer { margin-top: 2.5rem; color: var(--muted); font-size: .85rem; }
 </style>
 
 <main>
   <h1>Email PDF &rarr; Markdown</h1>
-  <p class="sub">Drop a saved email PDF below. It becomes a Markdown file named
-  <b>Subject&nbsp;-&nbsp;YYYY-MM-DD.md</b>, dated to the latest message in the thread.
-  Everything runs in your browser &mdash; nothing is uploaded anywhere.</p>
+  <p class="sub">Drop a saved email PDF below. Each email gets its own folder — named
+  <b>Subject From Sender Month Day</b> — inside the category you choose, with the
+  Markdown file saved inside it. Add the email's attachments to the same folder and
+  everything stays together. Nothing is uploaded anywhere.</p>
+
+  <div id="folderBar">
+    <span class="label">Email home folder:</span>
+    <span class="name" id="folderName">not chosen yet</span>
+    <button id="chooseFolder" class="primary">Choose folder</button>
+    <button id="reconnectFolder" style="display:none">Reconnect to folder</button>
+    <span class="hint" id="folderHint">Pick the folder that holds your category folders
+    (Everest Emails, Billing Emails, and so on) — for example a folder on your Desktop.
+    You only do this once.</span>
+  </div>
 
   <label id="drop">
     <div class="big">Drop email PDFs here</div>
@@ -74,11 +105,13 @@
   </label>
 
   <div id="results"></div>
-  <button id="downloadAll" class="primary">Download all Markdown files</button>
 
-  <footer>Tuned for emails saved as PDF from Outlook (From / Sent / To / Subject
-  headers). Other formats fall back to the PDF's own title and date. Ambiguous
-  numeric dates like 3/4/2026 are read as month/day (US style).</footer>
+  <footer>Works with Outlook email PDFs, including image-only ones made by
+  &ldquo;Microsoft Print to PDF&rdquo; (those are read with built-in OCR, which takes a few
+  seconds per page). Tip: when printing from Outlook, choosing &ldquo;Save as PDF&rdquo;
+  as the printer instead of &ldquo;Microsoft Print to PDF&rdquo; produces PDFs that convert
+  faster and more accurately. Ambiguous numeric dates like 3/4/2026 are read as
+  month/day (US style).</footer>
 </main>
 
 <script id="pdfjs-lib">
@@ -87,64 +120,163 @@
 <script id="pdfjs-worker" type="text/js-worker">
 /*__PDFJS_WORKER__*/
 </script>
+<script id="tess-lib">
+/*__TESS__*/
+</script>
+<script id="tess-core" type="text/js-worker">
+/*__TESS_CORE__*/
+</script>
+<script id="tess-worker" type="text/js-worker">
+/*__TESS_WORKER__*/
+</script>
+<script id="tess-lang" type="text/plain">/*__TESS_LANG_B64__*/</script>
 
 <script>
 "use strict";
 
-/* ---------- pdf.js setup: run the bundled worker from an inline blob ---------- */
-const workerCode = document.getElementById("pdfjs-worker").textContent;
+/* ================= pdf.js setup ================= */
 pdfjsLib.GlobalWorkerOptions.workerSrc = URL.createObjectURL(
-  new Blob([workerCode], { type: "text/javascript" })
+  new Blob([document.getElementById("pdfjs-worker").textContent], { type: "text/javascript" })
 );
 
-/* ---------- text extraction: rebuild visual lines from positioned glyph runs ---------- */
-async function extractLines(pdf) {
-  const lines = []; // { text, gapBefore } — gapBefore true means a paragraph break precedes it
+/* ================= OCR (tesseract.js) setup =================
+ * Everything is bundled in this file: the OCR engine core is concatenated
+ * with the worker script into one blob (the worker finds the pre-defined
+ * TesseractCore global and skips its own network loading), and the English
+ * language data is passed in directly as bytes. Fully offline. */
+let tessWorkerPromise = null;
+function getTessWorker() {
+  if (!tessWorkerPromise) {
+    tessWorkerPromise = (async () => {
+      const core = document.getElementById("tess-core").textContent;
+      const workerSrc = document.getElementById("tess-worker").textContent;
+      const blobUrl = URL.createObjectURL(
+        new Blob([core, "\n", workerSrc], { type: "text/javascript" })
+      );
+      // The language data rides in a data: URL; the path segment the worker
+      // appends ("/eng.traineddata.gz") lands in the URL fragment and is
+      // ignored, so the fetch resolves to the embedded bytes.
+      const b64 = document.getElementById("tess-lang").textContent.trim();
+      return Tesseract.createWorker("eng", 1, {
+        workerPath: blobUrl,
+        corePath: blobUrl + "#js",
+        langPath: "data:application/octet-stream;base64," + b64 + "#",
+        gzip: true,
+        cacheMethod: "none",
+        workerBlobURL: false,
+      });
+    })();
+  }
+  return tessWorkerPromise;
+}
+
+/* ================= text extraction ================= */
+
+// Shared: rows of positioned items -> [{text, gapBefore}] lines.
+// Items must carry x, y (top-down), w and str; joinGap inserts a space when
+// two items on a line are farther apart than that many units.
+function rowsToLines(rows, pageBreakBefore) {
+  const lines = [];
+  const gaps = [];
+  rows.sort((a, b) => a.y - b.y);
+  for (let i = 1; i < rows.length; i++) gaps.push(rows[i].y - rows[i - 1].y);
+  gaps.sort((a, b) => a - b);
+  // low percentile so sparse pages full of paragraph gaps don't skew it
+  const typical = gaps.length ? gaps[Math.floor(gaps.length * 0.25)] : 14;
+  rows.forEach((row, i) => {
+    row.items.sort((a, b) => a.x - b.x);
+    let text = "";
+    let prevEnd = null;
+    for (const it of row.items) {
+      if (prevEnd !== null && it.x - prevEnd > row.joinGap && !text.endsWith(" ") && !it.str.startsWith(" ")) {
+        text += " ";
+      }
+      text += it.str;
+      prevEnd = it.x + it.w;
+    }
+    const gapBefore = i === 0
+      ? pageBreakBefore
+      : row.y - rows[i - 1].y > Math.max(typical * 1.55, row.minGap);
+    lines.push({ text: text.replace(/\s+$/, ""), gapBefore });
+  });
+  return lines;
+}
+
+function clusterRows(items, yTol, joinGap, minGap) {
+  const rows = [];
+  for (const it of items) {
+    let row = rows.find(r => Math.abs(r.y - it.y) <= yTol);
+    if (!row) { row = { y: it.y, items: [], joinGap, minGap }; rows.push(row); }
+    row.items.push(it);
+  }
+  return rows;
+}
+
+async function extractPdfTextLines(pdf) {
+  const lines = [];
   for (let p = 1; p <= pdf.numPages; p++) {
     const page = await pdf.getPage(p);
     const content = await page.getTextContent();
-    const rows = [];
+    const items = [];
     for (const item of content.items) {
       if (!item.str || !item.str.trim()) continue;
-      const x = item.transform[4], y = item.transform[5];
-      let row = rows.find(r => Math.abs(r.y - y) <= 2.5);
-      if (!row) { row = { y, items: [] }; rows.push(row); }
-      row.items.push({ x, w: item.width || 0, str: item.str });
+      // transform[5] is the baseline y growing upward; negate for top-down order
+      items.push({ x: item.transform[4], y: -item.transform[5], w: item.width || 0, str: item.str });
     }
-    rows.sort((a, b) => b.y - a.y);
-
-    // typical line spacing on this page, for paragraph-break detection;
-    // use a low percentile so sparse pages full of paragraph gaps don't skew it
-    const gaps = [];
-    for (let i = 1; i < rows.length; i++) gaps.push(rows[i - 1].y - rows[i].y);
-    gaps.sort((a, b) => a - b);
-    const typical = gaps.length ? gaps[Math.floor(gaps.length * 0.25)] : 14;
-
-    rows.forEach((row, i) => {
-      row.items.sort((a, b) => a.x - b.x);
-      let text = "";
-      let prevEnd = null;
-      for (const it of row.items) {
-        if (prevEnd !== null && it.x - prevEnd > 1.2 && !text.endsWith(" ") && !it.str.startsWith(" ")) {
-          text += " ";
-        }
-        text += it.str;
-        prevEnd = it.x + it.w;
-      }
-      const gapBefore = i === 0
-        ? p > 1 // page start counts as a break except on page one
-        : rows[i - 1].y - row.y > Math.max(typical * 1.55, 6);
-      lines.push({ text: text.replace(/\s+$/, ""), gapBefore });
-    });
+    lines.push(...rowsToLines(clusterRows(items, 2.5, 1.2, 6), p > 1));
   }
   return lines;
 }
 
-/* ---------- date parsing ---------- */
+async function extractOcrLines(pdf, onStatus) {
+  const worker = await getTessWorker();
+  const lines = [];
+  for (let p = 1; p <= pdf.numPages; p++) {
+    onStatus(`Reading text from page ${p} of ${pdf.numPages} (OCR)\u2026`);
+    const page = await pdf.getPage(p);
+    const scale = Math.min(3.5, 2800 / page.getViewport({ scale: 1 }).width);
+    const viewport = page.getViewport({ scale });
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.ceil(viewport.width);
+    canvas.height = Math.ceil(viewport.height);
+    const ctx = canvas.getContext("2d");
+    ctx.fillStyle = "#fff";
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    await page.render({ canvasContext: ctx, viewport }).promise;
+    const result = await worker.recognize(canvas.toDataURL("image/png"), {}, { blocks: true, text: false });
+    const words = [];
+    for (const block of result.data.blocks || []) {
+      for (const par of block.paragraphs || []) {
+        for (const line of par.lines || []) {
+          for (const word of line.words || []) {
+            if (!word.text.trim()) continue;
+            const bb = word.bbox;
+            // OCR reads a standalone capital I as a pipe; no email prose has a lone |
+            const str = word.text === "|" ? "I" : word.text;
+            words.push({
+              x: bb.x0, y: (bb.y0 + bb.y1) / 2, w: bb.x1 - bb.x0,
+              h: bb.y1 - bb.y0, str,
+            });
+          }
+        }
+      }
+    }
+    const heights = words.map(w => w.h).sort((a, b) => a - b);
+    const medH = heights.length ? heights[Math.floor(heights.length / 2)] : 30;
+    const rows = clusterRows(words, medH * 0.55, 1e9, medH * 0.7); // joinGap huge: always space-join OCR words
+    rows.forEach(r => { r.joinGap = -1; }); // every word gap gets a single space
+    lines.push(...rowsToLines(rows, p > 1));
+  }
+  return lines;
+}
+
+/* ================= date parsing ================= */
 const MONTHS = {
   jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6,
   jul: 7, aug: 8, sep: 9, oct: 10, nov: 11, dec: 12,
 };
+const MONTH_FULL = ["January", "February", "March", "April", "May", "June",
+  "July", "August", "September", "October", "November", "December"];
 
 function parseEmailDate(s) {
   if (!s) return null;
@@ -194,35 +326,42 @@ function parseEmailDate(s) {
 }
 
 function parsePdfMetaDate(s) {
-  // PDF metadata format: D:20260728154500+00'00'
   const mm = (s || "").match(/D:(\d{4})(\d{2})(\d{2})(\d{2})?(\d{2})?/);
   if (!mm) return null;
   const date = new Date(+mm[1], +mm[2] - 1, +mm[3], +(mm[4] || 0), +(mm[5] || 0));
   return isNaN(date.getTime()) ? null : date;
 }
 
-/* ---------- Outlook thread parsing ---------- */
-const FIELD_RE = /^(From|Sent|Date|To|Cc|Bcc|Subject|Attachments|Importance)\s*:\s*(.*)$/i;
+/* ================= email thread parsing =================
+ * Handles both classic Outlook memo headers ("From: x") and the new
+ * Outlook print layout, where labels have no colons ("From  x"). */
+const FIELD_RE = /^(From|Sent|Date|Draft saved|To|Cc|Bcc|Subject|Attachments|Importance|Reply-To)\s*:?\s+(.*)$/i;
 const ORIG_MSG_RE = /^-{2,}\s*(Original|Forwarded)\s+Message\s*-{2,}$/i;
 const WROTE_RE = /^On\s+.+\bwrote:\s*$/i;
 
+function normalizeKey(k) {
+  const key = k.toLowerCase();
+  return (key === "date" || key === "draft saved") ? "sent" : key;
+}
+
 function isBlockStart(lines, i) {
-  const line = lines[i].text;
-  if (ORIG_MSG_RE.test(line)) return true;
-  if (WROTE_RE.test(line)) return true;
-  const f = line.match(FIELD_RE);
-  if (f && f[1].toLowerCase() === "from") {
-    // require a Sent/Date/To field nearby so body text starting with "From:" doesn't split the message
-    for (let j = i + 1; j < Math.min(i + 8, lines.length); j++) {
-      const g = lines[j].text.match(FIELD_RE);
-      if (g && /^(sent|date|to)$/i.test(g[1])) return true;
-    }
+  const t = lines[i].text;
+  if (ORIG_MSG_RE.test(t)) return true;
+  if (WROTE_RE.test(t)) return true;
+  const f = t.match(FIELD_RE);
+  if (!f || f[1].toLowerCase() !== "from") return false;
+  let corroborated = false;
+  for (let j = i + 1; j < Math.min(i + 8, lines.length); j++) {
+    const g = lines[j].text.match(FIELD_RE);
+    if (g && /^(sent|date|draft saved|to|cc)$/i.test(g[1])) { corroborated = true; break; }
   }
-  return false;
+  if (!corroborated) return false;
+  // a colon-less "From" needs stronger evidence than prose like "From my view"
+  if (!/^From\s*:/i.test(t)) return /[<@]/.test(t);
+  return true;
 }
 
 function parseHeader(lines, start) {
-  // returns { fields: {from, sent, to, cc, subject, ...}, bodyStart }
   const fields = {};
   let i = start;
   let lastKey = null;
@@ -232,18 +371,15 @@ function parseHeader(lines, start) {
     const line = lines[i];
     const f = line.text.match(FIELD_RE);
     if (f) {
-      lastKey = f[1].toLowerCase();
-      if (lastKey === "date") lastKey = "sent"; // normalize Outlook web's "Date:"
+      lastKey = normalizeKey(f[1]);
       fields[lastKey] = (fields[lastKey] ? fields[lastKey] + " " : "") + f[2].trim();
       if (lastKey === "from") sawFrom = true;
       i++;
       continue;
     }
-    if (!lastKey) break; // haven't matched anything yet
-    // a paragraph gap after the headers means the body begins
-    if (line.gapBefore && sawFrom) break;
-    // wrapped continuation of the previous field — only recipient-style
-    // fields wrap in practice; anything else is the body starting
+    if (!lastKey) break;
+    if (line.gapBefore && sawFrom) break; // paragraph gap: body begins
+    // wrapped continuation — only recipient-style fields wrap in practice
     if (!line.gapBefore && /^(to|cc|bcc|attachments)$/.test(lastKey)) {
       fields[lastKey] += " " + line.text.trim();
       i++;
@@ -254,11 +390,34 @@ function parseHeader(lines, start) {
   return { fields, bodyStart: i };
 }
 
+// Pull "N attachments (…)" + the filename list out of the top of a body
+function extractAttachments(msg) {
+  const body = msg.body;
+  for (let k = 0; k < Math.min(5, body.length); k++) {
+    const m = body[k].text.match(/^.{0,3}?\s*(\d+)\s+attachments?\s*\(/i);
+    if (!m) continue;
+    let e = k + 1;
+    const nameLines = [];
+    while (e < body.length && /\.[A-Za-z0-9]{2,5}\s*(;|,|$)/.test(body[e].text)) {
+      nameLines.push(body[e].text);
+      e++;
+    }
+    const names = nameLines.join(" ").split(/;/).map(s => s.trim()).filter(Boolean);
+    msg.attachments = { count: +m[1], names };
+    msg.body = body.slice(0, k).concat(body.slice(e));
+    return;
+  }
+  if (msg.fields.attachments) {
+    const names = msg.fields.attachments.split(/;/).map(s => s.trim()).filter(Boolean);
+    msg.attachments = { count: names.length, names };
+    delete msg.fields.attachments;
+  }
+}
+
 function parseMessages(lines) {
-  // find all block starts; a From: line right after an "Original Message"
-  // separator belongs to that separator's block, not a new one
   let starts = [];
   for (let i = 0; i < lines.length; i++) if (isBlockStart(lines, i)) starts.push(i);
+  // a From: line right after an "Original Message" separator belongs to it
   starts = starts.filter(s => !(s > 0 && ORIG_MSG_RE.test(lines[s - 1].text)));
 
   const messages = [];
@@ -269,10 +428,9 @@ function parseMessages(lines) {
     const end = s + 1 < starts.length ? starts[s + 1] : lines.length;
     const msg = { fields: {}, body: [] };
 
-    if (ORIG_MSG_RE.test(lines[i].text)) i++; // skip the separator itself
+    if (ORIG_MSG_RE.test(lines[i].text)) i++;
     if (i < end && WROTE_RE.test(lines[i].text)) {
-      // "On July 28, 2026, at 3:45 PM, John Smith wrote:" — the sender is
-      // whatever follows the last comma, the date is everything before it
+      // "On July 28, 2026, at 3:45 PM, John Smith wrote:" — sender after last comma
       const inner = lines[i].text.replace(/^On\s+/i, "").replace(/\s*wrote:\s*$/i, "");
       const cut = inner.lastIndexOf(",");
       if (cut > 0) {
@@ -288,6 +446,7 @@ function parseMessages(lines) {
       i = parsed.bodyStart;
     }
     msg.body = lines.slice(i, end);
+    extractAttachments(msg);
     msg.date = parseEmailDate(msg.fields.sent);
     if (Object.keys(msg.fields).length || msg.body.some(l => l.text.trim())) {
       messages.push(msg);
@@ -296,7 +455,17 @@ function parseMessages(lines) {
   return { messages, preamble };
 }
 
-/* ---------- markdown generation ---------- */
+function senderNameOf(msg) {
+  const from = (msg && msg.fields.from) || "";
+  let name = from.split("<")[0].trim().replace(/^["']|["']$/g, "").trim();
+  if (!name) {
+    const em = from.match(/<?([^<>@\s]+)@/);
+    name = em ? em[1] : "";
+  }
+  return name;
+}
+
+/* ================= markdown generation ================= */
 function escapeHeaderValue(s) {
   return s.replace(/</g, "\\<").replace(/>/g, "\\>");
 }
@@ -310,10 +479,10 @@ function bodyToMarkdown(bodyLines) {
   return out.trim();
 }
 
-const FIELD_ORDER = ["from", "sent", "to", "cc", "bcc", "subject", "attachments", "importance"];
+const FIELD_ORDER = ["from", "sent", "to", "cc", "bcc", "subject", "importance"];
 const FIELD_LABEL = {
   from: "From", sent: "Sent", to: "To", cc: "Cc", bcc: "Bcc",
-  subject: "Subject", attachments: "Attachments", importance: "Importance",
+  subject: "Subject", importance: "Importance",
 };
 
 function buildMarkdown(subject, messages, preamble) {
@@ -329,14 +498,18 @@ function buildMarkdown(subject, messages, preamble) {
         md += "**" + FIELD_LABEL[key] + ":** " + escapeHeaderValue(msg.fields[key]) + "  \n";
       }
     }
+    if (msg.attachments && msg.attachments.names.length) {
+      md += "\n**Attachments (" + msg.attachments.count + ") — add these files to this folder:**\n\n";
+      for (const n of msg.attachments.names) md += "- [ ] " + n + "\n";
+    }
     const body = bodyToMarkdown(msg.body);
     if (body) md += "\n" + body + "\n";
   }
   return md;
 }
 
-/* ---------- filename ---------- */
-function sanitizeFilename(s) {
+/* ================= naming ================= */
+function sanitizeName(s) {
   const cleaned = s
     .replace(/[\\/:*?"<>|\u0000-\u001f]/g, " ")
     .replace(/\s+/g, " ")
@@ -345,65 +518,235 @@ function sanitizeFilename(s) {
   return (cleaned || "email").slice(0, 120).trim();
 }
 
-function fmtDate(d) {
-  const pad = n => String(n).padStart(2, "0");
-  return d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate());
-}
-
-/* ---------- conversion pipeline ---------- */
-async function convertPdf(file) {
+/* ================= conversion pipeline ================= */
+async function convertPdf(file, onStatus) {
   const data = new Uint8Array(await file.arrayBuffer());
   const pdf = await pdfjsLib.getDocument({ data, isEvalSupported: false }).promise;
   let metaInfo = {};
   try { metaInfo = (await pdf.getMetadata()).info || {}; } catch (e) { /* optional */ }
 
-  const lines = await extractLines(pdf);
+  onStatus("Reading PDF\u2026");
+  let lines = await extractPdfTextLines(pdf);
+  const textChars = lines.reduce((n, l) => n + l.text.trim().length, 0);
+  let usedOcr = false;
+  if (textChars < 25) {
+    usedOcr = true;
+    lines = await extractOcrLines(pdf, onStatus);
+  }
+
   const { messages, preamble } = parseMessages(lines);
   const warnings = [];
 
-  // Subject: topmost message that carries one (Outlook puts the newest on top)
+  // Subject: explicit Subject field, else the heading printed above the
+  // headers (the last non-junk preamble line), else PDF title, else filename
   let subject = null;
   for (const msg of messages) {
     if (msg.fields.subject) { subject = msg.fields.subject; break; }
   }
-  if (!subject && preamble.length && preamble[0].text.length <= 150) {
-    // e.g. Outlook web prints the subject as the top line above the headers
-    subject = preamble[0].text;
-    preamble.shift(); // it's the title now, not body text
+  if (!subject) {
+    const cand = preamble.filter(l =>
+      l.text.trim() && !/^outlook$/i.test(l.text.trim()) && l.text.length <= 200);
+    if (cand.length) {
+      // with headers below, the subject is the heading right above them (last
+      // preamble line); with no email structure at all, the first line is the title
+      const pick = messages.length ? cand[cand.length - 1] : cand[0];
+      subject = pick.text;
+      const idx = preamble.indexOf(pick);
+      if (idx >= 0) preamble.splice(idx, 1);
+    }
   }
   const metaTitle = (metaInfo.Title || "").trim();
-  if (!subject && metaTitle && !/^untitled$/i.test(metaTitle)) subject = metaTitle;
+  if (!subject && metaTitle && !/^untitled$/i.test(metaTitle)) {
+    subject = metaTitle.replace(/\.eml\b.*$/i, "").trim();
+  }
   if (!subject) {
     subject = file.name.replace(/\.pdf$/i, "");
-    warnings.push("No Subject line found — used the PDF's filename instead.");
+    warnings.push("No subject found in the PDF — used the PDF's filename instead.");
   }
+  subject = subject.replace(/^[\[\(]\s*draft\s*[\]\)]\s*/i, "").trim();
 
-  // Date: latest message date in the thread
+  // Date: latest message in the thread
   const dates = messages.map(m => m.date).filter(Boolean);
   let date = dates.length ? new Date(Math.max(...dates.map(d => d.getTime()))) : null;
   if (!date) {
     date = parsePdfMetaDate(metaInfo.ModDate) || parsePdfMetaDate(metaInfo.CreationDate);
-    if (date) warnings.push("No message dates found — used the date stored in the PDF file.");
+    if (date) warnings.push("No message date found — used the date stored in the PDF file.");
   }
   if (!date) {
     date = new Date();
     warnings.push("No date found anywhere — used today's date.");
   }
 
+  const sender = senderNameOf(messages[0]);
+  if (!sender) warnings.push("Could not identify the sender — add them to the name yourself if needed.");
+
+  let name = sanitizeName(subject);
+  if (sender) name += " From " + sanitizeName(sender);
+  name += " " + MONTH_FULL[date.getMonth()] + " " + date.getDate();
+  name = sanitizeName(name);
+
   const markdown = buildMarkdown(subject, messages, preamble);
-  const filename = sanitizeFilename(subject) + " - " + fmtDate(date) + ".md";
-  return { filename, markdown, subject, date, messageCount: messages.length, warnings };
+  return { name, markdown, subject, sender, date, messageCount: messages.length, usedOcr, warnings };
 }
 
-/* ---------- UI ---------- */
-const drop = document.getElementById("drop");
-const fileInput = document.getElementById("fileInput");
-const resultsEl = document.getElementById("results");
-const downloadAllBtn = document.getElementById("downloadAll");
-const converted = [];
+/* ================= saving: real folders via the File System Access API ================= */
+const PRESET_CATEGORIES = [
+  "Everest Emails", "Optimed Agency Emails", "Paysign emails", "Billing Emails",
+  "IQ emails", "FTC Emails", "Sent emails",
+];
+const hasFolderApi = typeof window.showDirectoryPicker === "function";
+let baseDir = null;
+let existingCategories = [];
 
-function download(filename, text) {
-  const url = URL.createObjectURL(new Blob([text], { type: "text/markdown" }));
+const idb = {
+  open: () => new Promise((res, rej) => {
+    const rq = indexedDB.open("email-md-tool", 1);
+    rq.onupgradeneeded = () => rq.result.createObjectStore("kv");
+    rq.onsuccess = () => res(rq.result);
+    rq.onerror = () => rej(rq.error);
+  }),
+  async set(key, val) {
+    try {
+      const db = await this.open();
+      await new Promise((res, rej) => {
+        const tx = db.transaction("kv", "readwrite");
+        tx.objectStore("kv").put(val, key);
+        tx.oncomplete = res; tx.onerror = () => rej(tx.error);
+      });
+    } catch (e) { /* persistence is best-effort */ }
+  },
+  async get(key) {
+    try {
+      const db = await this.open();
+      return await new Promise((res, rej) => {
+        const rq = db.transaction("kv").objectStore("kv").get(key);
+        rq.onsuccess = () => res(rq.result);
+        rq.onerror = () => rej(rq.error);
+      });
+    } catch (e) { return undefined; }
+  },
+};
+
+async function refreshCategories() {
+  existingCategories = [];
+  if (baseDir) {
+    try {
+      for await (const [name, handle] of baseDir.entries()) {
+        if (handle.kind === "directory") existingCategories.push(name);
+      }
+    } catch (e) { /* listing is best-effort */ }
+  }
+  const seen = new Set(existingCategories.map(c => c.toLowerCase()));
+  for (const c of PRESET_CATEGORIES) if (!seen.has(c.toLowerCase())) existingCategories.push(c);
+  document.querySelectorAll("select.category").forEach(fillCategorySelect);
+}
+
+function fillCategorySelect(sel) {
+  const prev = sel.value || localStorage.getItem("lastCategory") || "";
+  sel.innerHTML = "";
+  for (const c of existingCategories) {
+    const o = document.createElement("option");
+    o.value = c; o.textContent = c;
+    sel.appendChild(o);
+  }
+  const extra = document.createElement("option");
+  extra.value = "__new__"; extra.textContent = "+ New category folder\u2026";
+  sel.appendChild(extra);
+  if (prev && [...sel.options].some(o => o.value === prev)) sel.value = prev;
+}
+
+async function setBaseDir(handle) {
+  baseDir = handle;
+  document.getElementById("folderName").textContent = handle.name;
+  document.getElementById("folderHint").textContent =
+    "Each save creates: " + handle.name + " \u203a category \u203a email folder \u203a Markdown file.";
+  document.getElementById("chooseFolder").textContent = "Change folder";
+  document.getElementById("reconnectFolder").style.display = "none";
+  await refreshCategories();
+  document.querySelectorAll("button.save").forEach(b => { b.disabled = false; });
+  idb.set("baseDir", handle);
+}
+
+async function chooseFolder() {
+  try {
+    const handle = await window.showDirectoryPicker({ mode: "readwrite" });
+    await setBaseDir(handle);
+  } catch (e) { /* user cancelled the picker */ }
+}
+
+async function restoreFolder() {
+  if (!hasFolderApi) return;
+  const handle = await idb.get("baseDir");
+  if (!handle || typeof handle.queryPermission !== "function") return;
+  try {
+    const perm = await handle.queryPermission({ mode: "readwrite" });
+    if (perm === "granted") { await setBaseDir(handle); return; }
+    // permission must be re-granted with a click (a browser security rule)
+    document.getElementById("folderName").textContent = handle.name + " (needs one click to reconnect)";
+    const btn = document.getElementById("reconnectFolder");
+    btn.style.display = "inline-block";
+    btn.onclick = async () => {
+      try {
+        if (await handle.requestPermission({ mode: "readwrite" }) === "granted") {
+          await setBaseDir(handle);
+        }
+      } catch (e) { /* fall back to Choose folder */ }
+    };
+  } catch (e) { /* stored handle unusable; user picks again */ }
+}
+
+async function saveIntoFolder(category, name, markdown) {
+  const catDir = await baseDir.getDirectoryHandle(category, { create: true });
+  const emailDir = await catDir.getDirectoryHandle(name, { create: true });
+  const fileHandle = await emailDir.getFileHandle(name + ".md", { create: true });
+  const w = await fileHandle.createWritable();
+  await w.write(new Blob([markdown], { type: "text/markdown" }));
+  await w.close();
+}
+
+/* ================= fallback saving: zip that expands to the folder ================= */
+const CRC_TABLE = (() => {
+  const t = new Uint32Array(256);
+  for (let n = 0; n < 256; n++) {
+    let c = n;
+    for (let k = 0; k < 8; k++) c = c & 1 ? 0xEDB88320 ^ (c >>> 1) : c >>> 1;
+    t[n] = c >>> 0;
+  }
+  return t;
+})();
+function crc32(bytes) {
+  let c = 0xFFFFFFFF;
+  for (let i = 0; i < bytes.length; i++) c = CRC_TABLE[(c ^ bytes[i]) & 0xFF] ^ (c >>> 8);
+  return (c ^ 0xFFFFFFFF) >>> 0;
+}
+function makeZip(entries) { // entries: [{path, data: Uint8Array}] — stored, no compression
+  const enc = new TextEncoder();
+  const chunks = [], central = [];
+  let offset = 0;
+  const u16 = v => new Uint8Array([v & 255, (v >> 8) & 255]);
+  const u32 = v => new Uint8Array([v & 255, (v >> 8) & 255, (v >> 16) & 255, (v >>> 24) & 255]);
+  for (const e of entries) {
+    const nameB = enc.encode(e.path);
+    const crc = crc32(e.data);
+    const head = [u32(0x04034b50), u16(20), u16(0x0800), u16(0), u16(0), u16(0),
+      u32(crc), u32(e.data.length), u32(e.data.length), u16(nameB.length), u16(0)];
+    const localSize = 30 + nameB.length + e.data.length;
+    chunks.push(...head, nameB, e.data);
+    central.push([u32(0x02014b50), u16(20), u16(20), u16(0x0800), u16(0), u16(0), u16(0),
+      u32(crc), u32(e.data.length), u32(e.data.length), u16(nameB.length), u16(0), u16(0),
+      u16(0), u16(0), u32(0), u32(offset), nameB]);
+    offset += localSize;
+  }
+  let centralSize = 0;
+  for (const c of central) { chunks.push(...c); centralSize += c.reduce((n, p) => n + p.length, 0); }
+  chunks.push(u32(0x06054b50), u16(0), u16(0), u16(entries.length), u16(entries.length),
+    u32(centralSize), u32(offset), u16(0));
+  return new Blob(chunks, { type: "application/zip" });
+}
+
+function download(filename, blobOrText) {
+  const blob = blobOrText instanceof Blob ? blobOrText : new Blob([blobOrText], { type: "text/markdown" });
+  const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
   a.download = filename;
@@ -413,54 +756,122 @@ function download(filename, text) {
   setTimeout(() => URL.revokeObjectURL(url), 10000);
 }
 
-function addCard(result, file) {
+/* ================= UI ================= */
+const drop = document.getElementById("drop");
+const fileInput = document.getElementById("fileInput");
+const resultsEl = document.getElementById("results");
+
+function addCard(file) {
   const card = document.createElement("div");
-  card.className = "card" + (result.error ? " error" : "");
-  if (result.error) {
-    card.innerHTML =
-      "<h3></h3><div class='status'>Could not convert this file: " + result.error + "</div>";
-    card.querySelector("h3").textContent = file.name;
-    resultsEl.appendChild(card);
-    return;
-  }
+  card.className = "card";
   card.innerHTML =
-    "<h3></h3>" +
-    "<div class='meta'>From <b class='orig'></b> &middot; <span class='count'></span></div>" +
-    "<div class='status'>Saved as Markdown &darr; (check your Downloads folder)</div>" +
+    "<div class='meta'>Converting <b class='orig'></b></div>" +
+    "<div class='namerow' style='display:none'>" +
+      "<input type='text' class='name' title='Folder and file name — edit if you like'>" +
+    "</div>" +
+    "<div class='saverow' style='display:none'>" +
+      "<label>Save into:</label> <select class='category'></select>" +
+      "<button class='primary save'>Save to folder</button>" +
+      "<button class='dlmd'>Download .md only</button>" +
+    "</div>" +
+    "<div class='status busy'>Starting\u2026</div>" +
     "<div class='warnings'></div>" +
-    "<div class='actions'><button class='primary dl'>Download again</button></div>" +
-    "<details><summary>Preview Markdown</summary><pre></pre></details>";
-  card.querySelector("h3").textContent = result.filename;
+    "<details style='display:none'><summary>Preview Markdown</summary><pre></pre></details>";
   card.querySelector(".orig").textContent = file.name;
+  resultsEl.appendChild(card);
+  return card;
+}
+
+function showResult(card, result) {
+  card.querySelector(".meta").innerHTML =
+    "From <b></b> &middot; <span class='count'></span>" + (result.usedOcr ? " &middot; read with OCR" : "");
+  card.querySelector(".meta b").textContent = card.dataset.origName;
   card.querySelector(".count").textContent =
     result.messageCount === 1 ? "1 message" :
-    result.messageCount === 0 ? "plain text (no thread headers found)" :
+    result.messageCount === 0 ? "no email headers found" :
     result.messageCount + " messages in thread";
+  const nameInput = card.querySelector("input.name");
+  nameInput.value = result.name;
+  card.querySelector(".namerow").style.display = "flex";
+  const saverow = card.querySelector(".saverow");
+  saverow.style.display = "flex";
+  const sel = card.querySelector("select.category");
+  fillCategorySelect(sel);
+  const saveBtn = card.querySelector("button.save");
+  const status = card.querySelector(".status");
+
+  if (hasFolderApi) {
+    saveBtn.disabled = !baseDir;
+    status.textContent = baseDir
+      ? "Ready — pick a category and click Save to folder."
+      : "Ready — choose your email home folder at the top first.";
+    status.classList.remove("busy");
+  } else {
+    saveBtn.textContent = "Download folder (.zip)";
+    saveBtn.disabled = false;
+    status.textContent = "This browser can't write folders directly — the zip expands into the email's folder.";
+    status.classList.remove("busy");
+  }
+
+  saveBtn.addEventListener("click", async () => {
+    const name = sanitizeName(nameInput.value || result.name);
+    let category = sel.value;
+    if (category === "__new__") {
+      category = (window.prompt("Name the new category folder:") || "").trim();
+      if (!category) return;
+      category = sanitizeName(category);
+      if (!existingCategories.includes(category)) existingCategories.push(category);
+      document.querySelectorAll("select.category").forEach(fillCategorySelect);
+      sel.value = category;
+    }
+    localStorage.setItem("lastCategory", category);
+    if (hasFolderApi && baseDir) {
+      try {
+        await saveIntoFolder(category, name, result.markdown);
+        status.textContent = "Saved: " + (baseDir.name ? baseDir.name + " \u203a " : "") +
+          category + " \u203a " + name + " \u203a " + name + ".md \u2014 add the attachments to that folder.";
+      } catch (e) {
+        status.textContent = "Could not save: " + (e.message || e);
+        status.classList.add("busy");
+      }
+    } else {
+      const data = new TextEncoder().encode(result.markdown);
+      download(name + ".zip", makeZip([{ path: name + "/" + name + ".md", data }]));
+      status.textContent = "Downloaded " + name + ".zip \u2014 unzip it inside your \u201C" +
+        category + "\u201D folder.";
+    }
+  });
+  card.querySelector("button.dlmd").addEventListener("click", () =>
+    download(sanitizeName(nameInput.value || result.name) + ".md", result.markdown));
+
+  const details = card.querySelector("details");
+  details.style.display = "block";
+  card.querySelector("pre").textContent = result.markdown;
+
   const warnEl = card.querySelector(".warnings");
   for (const w of result.warnings) {
     const div = document.createElement("div");
     div.className = "warn";
-    div.textContent = "Note: " + w;
+    div.textContent = w;
     warnEl.appendChild(div);
   }
-  card.querySelector("pre").textContent = result.markdown;
-  card.querySelector(".dl").addEventListener("click", () => download(result.filename, result.markdown));
-  resultsEl.appendChild(card);
 }
 
 async function handleFiles(fileList) {
   const files = [...fileList].filter(f => /\.pdf$/i.test(f.name) || f.type === "application/pdf");
   for (const file of files) {
+    const card = addCard(file);
+    card.dataset.origName = file.name;
+    const status = card.querySelector(".status");
     try {
-      const result = await convertPdf(file);
-      converted.push(result);
-      addCard(result, file);
-      download(result.filename, result.markdown);
+      const result = await convertPdf(file, msg => { status.textContent = msg; });
+      showResult(card, result);
     } catch (e) {
-      addCard({ error: e && e.message ? e.message : String(e) }, file);
+      card.classList.add("error");
+      status.textContent = "Could not convert this file: " + (e && e.message ? e.message : e);
+      status.classList.remove("busy");
     }
   }
-  if (converted.length > 1) downloadAllBtn.style.display = "inline-block";
 }
 
 drop.addEventListener("dragover", e => { e.preventDefault(); drop.classList.add("over"); });
@@ -471,7 +882,16 @@ drop.addEventListener("drop", e => {
   handleFiles(e.dataTransfer.files);
 });
 fileInput.addEventListener("change", () => { handleFiles(fileInput.files); fileInput.value = ""; });
-downloadAllBtn.addEventListener("click", () => {
-  converted.forEach((r, i) => setTimeout(() => download(r.filename, r.markdown), i * 300));
-});
+document.getElementById("chooseFolder").addEventListener("click", chooseFolder);
+
+refreshCategories(); // presets are available even before a folder is connected
+if (!hasFolderApi) {
+  document.getElementById("folderName").textContent = "not supported in this browser";
+  document.getElementById("chooseFolder").style.display = "none";
+  document.getElementById("folderHint").textContent =
+    "This browser can't create folders directly (use Chrome or Edge for that). " +
+    "You'll get a small .zip per email instead — unzipping it in your category folder creates the email's folder.";
+} else {
+  restoreFolder();
+}
 </script>
