@@ -1,0 +1,477 @@
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Email PDF → Markdown</title>
+<style>
+  :root {
+    --bg: #f6f7f9; --card: #ffffff; --text: #1a2233; --muted: #5b6472;
+    --accent: #2563eb; --accent-soft: #dbeafe; --border: #d8dde5;
+    --ok: #15803d; --err: #b91c1c;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #12161d; --card: #1b212b; --text: #e7ebf1; --muted: #9aa4b2;
+      --accent: #60a5fa; --accent-soft: #1e3a5f; --border: #313a47;
+      --ok: #4ade80; --err: #f87171;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 2rem 1rem 4rem; background: var(--bg); color: var(--text);
+    font: 16px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  }
+  main { max-width: 760px; margin: 0 auto; }
+  h1 { font-size: 1.6rem; margin: 0 0 .25rem; }
+  .sub { color: var(--muted); margin: 0 0 1.5rem; }
+  #drop {
+    border: 2px dashed var(--border); border-radius: 14px; background: var(--card);
+    padding: 3rem 1.5rem; text-align: center; cursor: pointer;
+    transition: border-color .15s, background .15s;
+  }
+  #drop.over { border-color: var(--accent); background: var(--accent-soft); }
+  #drop .big { font-size: 1.15rem; font-weight: 600; }
+  #drop .hint { color: var(--muted); margin-top: .35rem; font-size: .95rem; }
+  #drop input { display: none; }
+  #results { margin-top: 1.5rem; display: flex; flex-direction: column; gap: .9rem; }
+  .card {
+    background: var(--card); border: 1px solid var(--border); border-radius: 12px;
+    padding: 1rem 1.2rem;
+  }
+  .card h3 { margin: 0 0 .3rem; font-size: 1.05rem; overflow-wrap: anywhere; }
+  .card .meta { color: var(--muted); font-size: .9rem; overflow-wrap: anywhere; }
+  .card .meta b { color: var(--text); font-weight: 600; }
+  .card.error { border-color: var(--err); }
+  .card.error .status { color: var(--err); }
+  .status { font-size: .9rem; color: var(--ok); margin-top: .5rem; }
+  .warn { color: var(--muted); font-size: .85rem; margin-top: .35rem; }
+  .actions { margin-top: .75rem; display: flex; gap: .5rem; flex-wrap: wrap; }
+  button {
+    font: inherit; font-size: .92rem; padding: .45rem .9rem; border-radius: 8px;
+    border: 1px solid var(--border); background: var(--card); color: var(--text); cursor: pointer;
+  }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  button:hover { filter: brightness(1.06); }
+  details { margin-top: .75rem; }
+  details summary { cursor: pointer; color: var(--muted); font-size: .9rem; }
+  pre {
+    background: var(--bg); border: 1px solid var(--border); border-radius: 8px;
+    padding: .8rem; overflow-x: auto; font-size: .82rem; white-space: pre-wrap;
+    overflow-wrap: anywhere; max-height: 24rem; overflow-y: auto;
+  }
+  #downloadAll { margin-top: 1.2rem; display: none; }
+  footer { margin-top: 2.5rem; color: var(--muted); font-size: .85rem; }
+</style>
+
+<main>
+  <h1>Email PDF &rarr; Markdown</h1>
+  <p class="sub">Drop a saved email PDF below. It becomes a Markdown file named
+  <b>Subject&nbsp;-&nbsp;YYYY-MM-DD.md</b>, dated to the latest message in the thread.
+  Everything runs in your browser &mdash; nothing is uploaded anywhere.</p>
+
+  <label id="drop">
+    <div class="big">Drop email PDFs here</div>
+    <div class="hint">or click to choose files</div>
+    <input type="file" id="fileInput" accept=".pdf,application/pdf" multiple>
+  </label>
+
+  <div id="results"></div>
+  <button id="downloadAll" class="primary">Download all Markdown files</button>
+
+  <footer>Tuned for emails saved as PDF from Outlook (From / Sent / To / Subject
+  headers). Other formats fall back to the PDF's own title and date. Ambiguous
+  numeric dates like 3/4/2026 are read as month/day (US style).</footer>
+</main>
+
+<script id="pdfjs-lib">
+/*__PDFJS__*/
+</script>
+<script id="pdfjs-worker" type="text/js-worker">
+/*__PDFJS_WORKER__*/
+</script>
+
+<script>
+"use strict";
+
+/* ---------- pdf.js setup: run the bundled worker from an inline blob ---------- */
+const workerCode = document.getElementById("pdfjs-worker").textContent;
+pdfjsLib.GlobalWorkerOptions.workerSrc = URL.createObjectURL(
+  new Blob([workerCode], { type: "text/javascript" })
+);
+
+/* ---------- text extraction: rebuild visual lines from positioned glyph runs ---------- */
+async function extractLines(pdf) {
+  const lines = []; // { text, gapBefore } — gapBefore true means a paragraph break precedes it
+  for (let p = 1; p <= pdf.numPages; p++) {
+    const page = await pdf.getPage(p);
+    const content = await page.getTextContent();
+    const rows = [];
+    for (const item of content.items) {
+      if (!item.str || !item.str.trim()) continue;
+      const x = item.transform[4], y = item.transform[5];
+      let row = rows.find(r => Math.abs(r.y - y) <= 2.5);
+      if (!row) { row = { y, items: [] }; rows.push(row); }
+      row.items.push({ x, w: item.width || 0, str: item.str });
+    }
+    rows.sort((a, b) => b.y - a.y);
+
+    // typical line spacing on this page, for paragraph-break detection;
+    // use a low percentile so sparse pages full of paragraph gaps don't skew it
+    const gaps = [];
+    for (let i = 1; i < rows.length; i++) gaps.push(rows[i - 1].y - rows[i].y);
+    gaps.sort((a, b) => a - b);
+    const typical = gaps.length ? gaps[Math.floor(gaps.length * 0.25)] : 14;
+
+    rows.forEach((row, i) => {
+      row.items.sort((a, b) => a.x - b.x);
+      let text = "";
+      let prevEnd = null;
+      for (const it of row.items) {
+        if (prevEnd !== null && it.x - prevEnd > 1.2 && !text.endsWith(" ") && !it.str.startsWith(" ")) {
+          text += " ";
+        }
+        text += it.str;
+        prevEnd = it.x + it.w;
+      }
+      const gapBefore = i === 0
+        ? p > 1 // page start counts as a break except on page one
+        : rows[i - 1].y - row.y > Math.max(typical * 1.55, 6);
+      lines.push({ text: text.replace(/\s+$/, ""), gapBefore });
+    });
+  }
+  return lines;
+}
+
+/* ---------- date parsing ---------- */
+const MONTHS = {
+  jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6,
+  jul: 7, aug: 8, sep: 9, oct: 10, nov: 11, dec: 12,
+};
+
+function parseEmailDate(s) {
+  if (!s) return null;
+  let y, m, d;
+  // "28 July 2026" (day first)
+  let mm = s.match(/\b(\d{1,2})(?:st|nd|rd|th)?\s+([A-Za-z]{3,9})\.?,?\s+(\d{4})/);
+  if (mm) {
+    const mon = MONTHS[mm[2].slice(0, 3).toLowerCase()];
+    const day = +mm[1];
+    if (mon && day >= 1 && day <= 31) { y = +mm[3]; m = mon; d = day; }
+  }
+  if (y === undefined) {
+    // "July 28, 2026" (month first)
+    mm = s.match(/\b([A-Za-z]{3,9})\.?\s+(\d{1,2})(?:st|nd|rd|th)?,?\s+(\d{4})/);
+    if (mm) {
+      const mon = MONTHS[mm[1].slice(0, 3).toLowerCase()];
+      const day = +mm[2];
+      if (mon && day >= 1 && day <= 31) { y = +mm[3]; m = mon; d = day; }
+    }
+  }
+  if (y === undefined) {
+    // "2026-07-28", "7/28/2026", "28/07/2026", "28.07.2026"
+    mm = s.match(/(\d{1,4})[\/\-.](\d{1,2})[\/\-.](\d{2,4})/);
+    if (mm) {
+      let a = +mm[1], b = +mm[2], c = +mm[3];
+      if (a >= 1000) { y = a; m = b; d = c; }              // ISO year first
+      else {
+        if (c < 100) c += 2000;
+        y = c;
+        if (a > 12) { d = a; m = b; }                       // must be day-first
+        else { m = a; d = b; }                              // default: US month-first
+      }
+      if (!(m >= 1 && m <= 12 && d >= 1 && d <= 31)) return null;
+    }
+  }
+  if (y === undefined) return null;
+  let h = 0, min = 0;
+  const t = s.match(/(\d{1,2}):(\d{2})(?::\d{2})?\s*([AP]M?\.?M?\.?)?/i);
+  if (t) {
+    h = +t[1]; min = +t[2];
+    const ap = (t[3] || "").toUpperCase();
+    if (ap.startsWith("P") && h < 12) h += 12;
+    if (ap.startsWith("A") && h === 12) h = 0;
+  }
+  const date = new Date(y, m - 1, d, h, min);
+  return isNaN(date.getTime()) ? null : date;
+}
+
+function parsePdfMetaDate(s) {
+  // PDF metadata format: D:20260728154500+00'00'
+  const mm = (s || "").match(/D:(\d{4})(\d{2})(\d{2})(\d{2})?(\d{2})?/);
+  if (!mm) return null;
+  const date = new Date(+mm[1], +mm[2] - 1, +mm[3], +(mm[4] || 0), +(mm[5] || 0));
+  return isNaN(date.getTime()) ? null : date;
+}
+
+/* ---------- Outlook thread parsing ---------- */
+const FIELD_RE = /^(From|Sent|Date|To|Cc|Bcc|Subject|Attachments|Importance)\s*:\s*(.*)$/i;
+const ORIG_MSG_RE = /^-{2,}\s*(Original|Forwarded)\s+Message\s*-{2,}$/i;
+const WROTE_RE = /^On\s+.+\bwrote:\s*$/i;
+
+function isBlockStart(lines, i) {
+  const line = lines[i].text;
+  if (ORIG_MSG_RE.test(line)) return true;
+  if (WROTE_RE.test(line)) return true;
+  const f = line.match(FIELD_RE);
+  if (f && f[1].toLowerCase() === "from") {
+    // require a Sent/Date/To field nearby so body text starting with "From:" doesn't split the message
+    for (let j = i + 1; j < Math.min(i + 8, lines.length); j++) {
+      const g = lines[j].text.match(FIELD_RE);
+      if (g && /^(sent|date|to)$/i.test(g[1])) return true;
+    }
+  }
+  return false;
+}
+
+function parseHeader(lines, start) {
+  // returns { fields: {from, sent, to, cc, subject, ...}, bodyStart }
+  const fields = {};
+  let i = start;
+  let lastKey = null;
+  let sawFrom = false;
+  const limit = Math.min(start + 16, lines.length);
+  while (i < limit) {
+    const line = lines[i];
+    const f = line.text.match(FIELD_RE);
+    if (f) {
+      lastKey = f[1].toLowerCase();
+      if (lastKey === "date") lastKey = "sent"; // normalize Outlook web's "Date:"
+      fields[lastKey] = (fields[lastKey] ? fields[lastKey] + " " : "") + f[2].trim();
+      if (lastKey === "from") sawFrom = true;
+      i++;
+      continue;
+    }
+    if (!lastKey) break; // haven't matched anything yet
+    // a paragraph gap after the headers means the body begins
+    if (line.gapBefore && sawFrom) break;
+    // wrapped continuation of the previous field — only recipient-style
+    // fields wrap in practice; anything else is the body starting
+    if (!line.gapBefore && /^(to|cc|bcc|attachments)$/.test(lastKey)) {
+      fields[lastKey] += " " + line.text.trim();
+      i++;
+      continue;
+    }
+    break;
+  }
+  return { fields, bodyStart: i };
+}
+
+function parseMessages(lines) {
+  // find all block starts; a From: line right after an "Original Message"
+  // separator belongs to that separator's block, not a new one
+  let starts = [];
+  for (let i = 0; i < lines.length; i++) if (isBlockStart(lines, i)) starts.push(i);
+  starts = starts.filter(s => !(s > 0 && ORIG_MSG_RE.test(lines[s - 1].text)));
+
+  const messages = [];
+  const preamble = lines.slice(0, starts.length ? starts[0] : lines.length);
+
+  for (let s = 0; s < starts.length; s++) {
+    let i = starts[s];
+    const end = s + 1 < starts.length ? starts[s + 1] : lines.length;
+    const msg = { fields: {}, body: [] };
+
+    if (ORIG_MSG_RE.test(lines[i].text)) i++; // skip the separator itself
+    if (i < end && WROTE_RE.test(lines[i].text)) {
+      // "On July 28, 2026, at 3:45 PM, John Smith wrote:" — the sender is
+      // whatever follows the last comma, the date is everything before it
+      const inner = lines[i].text.replace(/^On\s+/i, "").replace(/\s*wrote:\s*$/i, "");
+      const cut = inner.lastIndexOf(",");
+      if (cut > 0) {
+        msg.fields.sent = inner.slice(0, cut).trim();
+        msg.fields.from = inner.slice(cut + 1).trim();
+      } else {
+        msg.fields.sent = inner;
+      }
+      i++;
+    } else if (i < end) {
+      const parsed = parseHeader(lines, i);
+      msg.fields = parsed.fields;
+      i = parsed.bodyStart;
+    }
+    msg.body = lines.slice(i, end);
+    msg.date = parseEmailDate(msg.fields.sent);
+    if (Object.keys(msg.fields).length || msg.body.some(l => l.text.trim())) {
+      messages.push(msg);
+    }
+  }
+  return { messages, preamble };
+}
+
+/* ---------- markdown generation ---------- */
+function escapeHeaderValue(s) {
+  return s.replace(/</g, "\\<").replace(/>/g, "\\>");
+}
+
+function bodyToMarkdown(bodyLines) {
+  let out = "";
+  for (const line of bodyLines) {
+    if (line.gapBefore && out) out += "\n";
+    out += line.text + "\n";
+  }
+  return out.trim();
+}
+
+const FIELD_ORDER = ["from", "sent", "to", "cc", "bcc", "subject", "attachments", "importance"];
+const FIELD_LABEL = {
+  from: "From", sent: "Sent", to: "To", cc: "Cc", bcc: "Bcc",
+  subject: "Subject", attachments: "Attachments", importance: "Importance",
+};
+
+function buildMarkdown(subject, messages, preamble) {
+  let md = "# " + subject.trim() + "\n";
+  if (!messages.length) {
+    const text = bodyToMarkdown(preamble);
+    return md + (text ? "\n" + text + "\n" : "");
+  }
+  for (const msg of messages) {
+    md += "\n---\n\n";
+    for (const key of FIELD_ORDER) {
+      if (msg.fields[key]) {
+        md += "**" + FIELD_LABEL[key] + ":** " + escapeHeaderValue(msg.fields[key]) + "  \n";
+      }
+    }
+    const body = bodyToMarkdown(msg.body);
+    if (body) md += "\n" + body + "\n";
+  }
+  return md;
+}
+
+/* ---------- filename ---------- */
+function sanitizeFilename(s) {
+  const cleaned = s
+    .replace(/[\\/:*?"<>|\u0000-\u001f]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/[. ]+$/, "");
+  return (cleaned || "email").slice(0, 120).trim();
+}
+
+function fmtDate(d) {
+  const pad = n => String(n).padStart(2, "0");
+  return d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate());
+}
+
+/* ---------- conversion pipeline ---------- */
+async function convertPdf(file) {
+  const data = new Uint8Array(await file.arrayBuffer());
+  const pdf = await pdfjsLib.getDocument({ data, isEvalSupported: false }).promise;
+  let metaInfo = {};
+  try { metaInfo = (await pdf.getMetadata()).info || {}; } catch (e) { /* optional */ }
+
+  const lines = await extractLines(pdf);
+  const { messages, preamble } = parseMessages(lines);
+  const warnings = [];
+
+  // Subject: topmost message that carries one (Outlook puts the newest on top)
+  let subject = null;
+  for (const msg of messages) {
+    if (msg.fields.subject) { subject = msg.fields.subject; break; }
+  }
+  if (!subject && preamble.length && preamble[0].text.length <= 150) {
+    // e.g. Outlook web prints the subject as the top line above the headers
+    subject = preamble[0].text;
+    preamble.shift(); // it's the title now, not body text
+  }
+  const metaTitle = (metaInfo.Title || "").trim();
+  if (!subject && metaTitle && !/^untitled$/i.test(metaTitle)) subject = metaTitle;
+  if (!subject) {
+    subject = file.name.replace(/\.pdf$/i, "");
+    warnings.push("No Subject line found — used the PDF's filename instead.");
+  }
+
+  // Date: latest message date in the thread
+  const dates = messages.map(m => m.date).filter(Boolean);
+  let date = dates.length ? new Date(Math.max(...dates.map(d => d.getTime()))) : null;
+  if (!date) {
+    date = parsePdfMetaDate(metaInfo.ModDate) || parsePdfMetaDate(metaInfo.CreationDate);
+    if (date) warnings.push("No message dates found — used the date stored in the PDF file.");
+  }
+  if (!date) {
+    date = new Date();
+    warnings.push("No date found anywhere — used today's date.");
+  }
+
+  const markdown = buildMarkdown(subject, messages, preamble);
+  const filename = sanitizeFilename(subject) + " - " + fmtDate(date) + ".md";
+  return { filename, markdown, subject, date, messageCount: messages.length, warnings };
+}
+
+/* ---------- UI ---------- */
+const drop = document.getElementById("drop");
+const fileInput = document.getElementById("fileInput");
+const resultsEl = document.getElementById("results");
+const downloadAllBtn = document.getElementById("downloadAll");
+const converted = [];
+
+function download(filename, text) {
+  const url = URL.createObjectURL(new Blob([text], { type: "text/markdown" }));
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 10000);
+}
+
+function addCard(result, file) {
+  const card = document.createElement("div");
+  card.className = "card" + (result.error ? " error" : "");
+  if (result.error) {
+    card.innerHTML =
+      "<h3></h3><div class='status'>Could not convert this file: " + result.error + "</div>";
+    card.querySelector("h3").textContent = file.name;
+    resultsEl.appendChild(card);
+    return;
+  }
+  card.innerHTML =
+    "<h3></h3>" +
+    "<div class='meta'>From <b class='orig'></b> &middot; <span class='count'></span></div>" +
+    "<div class='status'>Saved as Markdown &darr; (check your Downloads folder)</div>" +
+    "<div class='warnings'></div>" +
+    "<div class='actions'><button class='primary dl'>Download again</button></div>" +
+    "<details><summary>Preview Markdown</summary><pre></pre></details>";
+  card.querySelector("h3").textContent = result.filename;
+  card.querySelector(".orig").textContent = file.name;
+  card.querySelector(".count").textContent =
+    result.messageCount === 1 ? "1 message" :
+    result.messageCount === 0 ? "plain text (no thread headers found)" :
+    result.messageCount + " messages in thread";
+  const warnEl = card.querySelector(".warnings");
+  for (const w of result.warnings) {
+    const div = document.createElement("div");
+    div.className = "warn";
+    div.textContent = "Note: " + w;
+    warnEl.appendChild(div);
+  }
+  card.querySelector("pre").textContent = result.markdown;
+  card.querySelector(".dl").addEventListener("click", () => download(result.filename, result.markdown));
+  resultsEl.appendChild(card);
+}
+
+async function handleFiles(fileList) {
+  const files = [...fileList].filter(f => /\.pdf$/i.test(f.name) || f.type === "application/pdf");
+  for (const file of files) {
+    try {
+      const result = await convertPdf(file);
+      converted.push(result);
+      addCard(result, file);
+      download(result.filename, result.markdown);
+    } catch (e) {
+      addCard({ error: e && e.message ? e.message : String(e) }, file);
+    }
+  }
+  if (converted.length > 1) downloadAllBtn.style.display = "inline-block";
+}
+
+drop.addEventListener("dragover", e => { e.preventDefault(); drop.classList.add("over"); });
+drop.addEventListener("dragleave", () => drop.classList.remove("over"));
+drop.addEventListener("drop", e => {
+  e.preventDefault();
+  drop.classList.remove("over");
+  handleFiles(e.dataTransfer.files);
+});
+fileInput.addEventListener("change", () => { handleFiles(fileInput.files); fileInput.value = ""; });
+downloadAllBtn.addEventListener("click", () => {
+  converted.forEach((r, i) => setTimeout(() => download(r.filename, r.markdown), i * 300));
+});
+</script>
