@@ -2,9 +2,9 @@
 
 Home of the **Email PDF → Markdown converter** — a drag-and-drop tool that
 files emails saved as PDFs into organized category folders. Each email gets its
-own folder named `Subject From Sender Month Day` with the Markdown conversion
-inside, ready for its attachments to be added alongside. Reads both normal and
-image-only PDFs (built-in OCR).
+own folder named `Subject From Sender Month Day` holding the Markdown
+conversion and the email's attachments, pulled automatically from your
+Attachments folder. Reads both normal and image-only PDFs (built-in OCR).
 
 - **The tool:** [`tools/email-pdf-to-markdown.html`](tools/email-pdf-to-markdown.html) —
   a single file that runs entirely in your web browser. Download it, double-click

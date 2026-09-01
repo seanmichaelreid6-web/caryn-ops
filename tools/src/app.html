@@ -30,6 +30,13 @@
   #folderBar .label { font-weight: 600; }
   #folderBar .name { color: var(--ok); font-weight: 600; }
   #folderBar .hint { color: var(--muted); font-size: .9rem; flex-basis: 100%; }
+  #folderBar .hint input { vertical-align: middle; margin-right: .3rem; }
+  .att-list { margin: .6rem 0 0; padding: 0; list-style: none; font-size: .9rem; }
+  .att-list li { padding: .15rem 0; overflow-wrap: anywhere; }
+  .att-list .ok { color: var(--ok); }
+  .att-list .missing { color: var(--warntext); }
+  .att-list .muted { color: var(--muted); }
+  .att-list button { font-size: .8rem; padding: .15rem .5rem; margin-left: .4rem; }
   #drop {
     display: block;
     border: 2px dashed var(--border); border-radius: 14px; background: var(--card);
@@ -96,6 +103,12 @@
     <span class="hint" id="folderHint">Pick the folder that holds your category folders
     (Everest Emails, Billing Emails, and so on) — for example a folder on your Desktop.
     You only do this once.</span>
+    <span class="label">Attachments folder:</span>
+    <span class="name" id="attachName">not chosen yet</span>
+    <button id="chooseAttach">Choose Attachments folder</button>
+    <label class="hint" id="attachHint"><input type="checkbox" id="moveAttach">
+    Remove attachments from the Attachments folder after filing them (otherwise they're copied)
+    </label>
   </div>
 
   <label id="drop">
@@ -393,13 +406,20 @@ function parseHeader(lines, start) {
 // Pull "N attachments (…)" + the filename list out of the top of a body
 function extractAttachments(msg) {
   const body = msg.body;
-  for (let k = 0; k < Math.min(5, body.length); k++) {
-    const m = body[k].text.match(/^.{0,3}?\s*(\d+)\s+attachments?\s*\(/i);
+  for (let k = 0; k < Math.min(12, body.length); k++) {
+    // the paperclip icon in front of the count can OCR into a few stray characters
+    const m = body[k].text.match(/^.{0,8}?\s*(\d+)\s+attachments?\s*\(/i);
     if (!m) continue;
+    // The filenames sit in a tight block under the count; long names wrap at
+    // arbitrary points, so after a first line that shows a file extension,
+    // keep reading until the paragraph gap that precedes the body.
     let e = k + 1;
     const nameLines = [];
-    while (e < body.length && /\.[A-Za-z0-9]{2,5}\s*(;|,|$)/.test(body[e].text)) {
-      nameLines.push(body[e].text);
+    while (e < body.length && nameLines.length < 8) {
+      const l = body[e];
+      if (nameLines.length === 0 && !/\.[A-Za-z0-9]{2,5}\s*(;|,|$)/.test(l.text)) break;
+      if (nameLines.length > 0 && (l.gapBefore || FIELD_RE.test(l.text))) break;
+      nameLines.push(l.text);
       e++;
     }
     const names = nameLines.join(" ").split(/;/).map(s => s.trim()).filter(Boolean);
@@ -586,7 +606,11 @@ async function convertPdf(file, onStatus) {
   name = sanitizeName(name);
 
   const markdown = buildMarkdown(subject, messages, preamble);
-  return { name, markdown, subject, sender, date, messageCount: messages.length, usedOcr, warnings };
+  const attachmentNames = [...new Set(messages.flatMap(m => m.attachments ? m.attachments.names : []))];
+  return {
+    name, markdown, subject, sender, date, attachmentNames,
+    messageCount: messages.length, usedOcr, warnings,
+  };
 }
 
 /* ================= saving: real folders via the File System Access API ================= */
@@ -596,6 +620,7 @@ const PRESET_CATEGORIES = [
 ];
 const hasFolderApi = typeof window.showDirectoryPicker === "function";
 let baseDir = null;
+let attachDir = null;
 let existingCategories = [];
 
 const idb = {
@@ -665,6 +690,28 @@ async function setBaseDir(handle) {
   await refreshCategories();
   document.querySelectorAll("button.save").forEach(b => { b.disabled = false; });
   idb.set("baseDir", handle);
+  // an "Attachments" folder inside the home folder is picked up automatically
+  if (!attachDir) {
+    try {
+      for await (const [name, h] of handle.entries()) {
+        if (h.kind === "directory" && /^attachments?$/i.test(name)) {
+          await setAttachDir(h, true);
+          break;
+        }
+      }
+    } catch (e) { /* best-effort */ }
+  }
+}
+
+async function setAttachDir(handle, auto) {
+  attachDir = handle;
+  document.getElementById("attachName").textContent = handle.name + (auto ? " (found automatically)" : "");
+  document.getElementById("chooseAttach").textContent = "Change Attachments folder";
+  idb.set("attachDir", handle);
+  // re-check every converted email against the newly chosen folder
+  for (const card of document.querySelectorAll("#results .card")) {
+    if (card._result) renderAttachments(card);
+  }
 }
 
 async function chooseFolder() {
@@ -674,34 +721,220 @@ async function chooseFolder() {
   } catch (e) { /* user cancelled the picker */ }
 }
 
+async function chooseAttachFolder() {
+  try {
+    const handle = await window.showDirectoryPicker({ mode: "readwrite" });
+    await setAttachDir(handle, false);
+  } catch (e) { /* user cancelled the picker */ }
+}
+
 async function restoreFolder() {
   if (!hasFolderApi) return;
   const handle = await idb.get("baseDir");
-  if (!handle || typeof handle.queryPermission !== "function") return;
+  const attach = await idb.get("attachDir");
+  const usable = h => h && typeof h.queryPermission === "function";
+  if (!usable(handle) && !usable(attach)) return;
   try {
-    const perm = await handle.queryPermission({ mode: "readwrite" });
-    if (perm === "granted") { await setBaseDir(handle); return; }
+    const ok = async h => usable(h) && (await h.queryPermission({ mode: "readwrite" })) === "granted";
+    const baseOk = await ok(handle), attachOk = await ok(attach);
+    if (attachOk) await setAttachDir(attach, false);
+    if (baseOk) await setBaseDir(handle);
+    if (baseOk && (attachOk || !usable(attach))) return;
     // permission must be re-granted with a click (a browser security rule)
-    document.getElementById("folderName").textContent = handle.name + " (needs one click to reconnect)";
+    if (!baseOk && usable(handle)) {
+      document.getElementById("folderName").textContent = handle.name + " (needs one click to reconnect)";
+    }
+    if (!attachOk && usable(attach)) {
+      document.getElementById("attachName").textContent = attach.name + " (needs one click to reconnect)";
+    }
     const btn = document.getElementById("reconnectFolder");
     btn.style.display = "inline-block";
     btn.onclick = async () => {
       try {
-        if (await handle.requestPermission({ mode: "readwrite" }) === "granted") {
+        if (usable(attach) && !attachDir &&
+            await attach.requestPermission({ mode: "readwrite" }) === "granted") {
+          await setAttachDir(attach, false);
+        }
+        if (usable(handle) && !baseDir &&
+            await handle.requestPermission({ mode: "readwrite" }) === "granted") {
           await setBaseDir(handle);
         }
-      } catch (e) { /* fall back to Choose folder */ }
+        if (baseDir) btn.style.display = "none";
+      } catch (e) { /* fall back to the Choose buttons */ }
     };
-  } catch (e) { /* stored handle unusable; user picks again */ }
+  } catch (e) { /* stored handles unusable; user picks again */ }
 }
 
-async function saveIntoFolder(category, name, markdown) {
+/* ================= attachments: find the email's files in the Attachments folder =================
+ * Names come from the email (sometimes via OCR), so matching is forgiving:
+ * case, spacing, punctuation, a stray space before the extension, and
+ * Windows' " (1)" duplicate suffix are all ignored, and near-misses are
+ * scored with a character-bigram similarity. */
+function normName(s) {
+  return s.toLowerCase()
+    .replace(/\s*\(\d+\)(?=\.[a-z0-9]{2,5}$)/, "")
+    .replace(/\s+(?=\.[a-z0-9]{2,5}$)/, "")
+    .replace(/[^a-z0-9.]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+function extOf(s) { const m = s.match(/\.([a-z0-9]{2,5})$/i); return m ? m[1].toLowerCase() : ""; }
+function bigrams(s) {
+  const out = new Map();
+  for (let i = 0; i < s.length - 1; i++) {
+    const g = s.slice(i, i + 2);
+    out.set(g, (out.get(g) || 0) + 1);
+  }
+  return out;
+}
+function similarity(a, b) {
+  const ga = bigrams(a), gb = bigrams(b);
+  let shared = 0, total = 0;
+  for (const [g, n] of ga) { total += n; if (gb.has(g)) shared += Math.min(n, gb.get(g)); }
+  for (const n of gb.values()) total += n;
+  return total ? (2 * shared) / total : 0;
+}
+
+async function listAttachFiles() {
+  const files = [];
+  if (!attachDir) return files;
+  try {
+    for await (const [name, h] of attachDir.entries()) {
+      if (h.kind === "file") files.push({ name, handle: h, norm: normName(name), ext: extOf(name) });
+    }
+  } catch (e) { /* folder unreadable */ }
+  return files;
+}
+
+// For each wanted name: {wanted, file, kind: "exact" | "close" | "maybe" | "none"}
+async function matchAttachments(wanted) {
+  const files = await listAttachFiles();
+  const taken = new Set();
+  const results = [];
+  for (const w of wanted) {
+    const wn = normName(w), we = extOf(w);
+    let best = null, bestScore = 0;
+    for (const f of files) {
+      if (taken.has(f.name)) continue;
+      const score = f.norm === wn ? 1 : (we && f.ext !== we ? 0 : similarity(f.norm, wn));
+      if (score > bestScore) { best = f; bestScore = score; }
+    }
+    let kind = "none";
+    if (best && bestScore >= 0.999) kind = "exact";
+    else if (best && bestScore >= 0.85) kind = "close";
+    else if (best && bestScore >= 0.6) kind = "maybe";
+    else best = null;
+    if (best && kind !== "maybe") taken.add(best.name);
+    results.push({ wanted: w, file: best, kind });
+  }
+  return results;
+}
+
+async function copyAttachment(fileHandle, destDir, move) {
+  const file = await fileHandle.getFile();
+  const dest = await destDir.getFileHandle(fileHandle.name, { create: true });
+  const w = await dest.createWritable();
+  await w.write(file);
+  await w.close();
+  if (move) await attachDir.removeEntry(fileHandle.name);
+}
+
+function renderAttachments(card) {
+  const result = card._result;
+  const list = card.querySelector(".att-list");
+  list.innerHTML = "";
+  if (!result.attachmentNames.length) return;
+  const head = document.createElement("li");
+  head.innerHTML = "<b>Attachments listed in the email:</b>";
+  list.appendChild(head);
+  if (!hasFolderApi) {
+    for (const n of result.attachmentNames) {
+      const li = document.createElement("li");
+      li.className = "muted";
+      li.textContent = "• " + n;
+      list.appendChild(li);
+    }
+    return;
+  }
+  if (!attachDir) {
+    for (const n of result.attachmentNames) {
+      const li = document.createElement("li");
+      li.className = "muted";
+      li.textContent = "• " + n;
+      list.appendChild(li);
+    }
+    const li = document.createElement("li");
+    li.className = "muted";
+    li.textContent = "Choose your Attachments folder at the top and these will be pulled in automatically.";
+    list.appendChild(li);
+    return;
+  }
+  const pending = document.createElement("li");
+  pending.className = "muted";
+  pending.textContent = "Looking in " + attachDir.name + "…";
+  list.appendChild(pending);
+  matchAttachments(result.attachmentNames).then(matches => {
+    card._matches = matches;
+    drawMatches(card);
+  });
+}
+
+function drawMatches(card) {
+  const list = card.querySelector(".att-list");
+  list.innerHTML = "<li><b>Attachments listed in the email:</b></li>";
+  for (const m of card._matches) {
+    const li = document.createElement("li");
+    if (m.kind === "exact" || m.kind === "close") {
+      li.className = "ok";
+      li.textContent = "✓ " + m.wanted +
+        (m.kind === "close" ? " → will use “" + m.file.name + "”" : "") +
+        " — found in " + attachDir.name;
+    } else if (m.kind === "maybe") {
+      li.className = "missing";
+      li.textContent = "? " + m.wanted + " — not found; closest file is “" + m.file.name + "”";
+      const btn = document.createElement("button");
+      btn.textContent = "Use that file";
+      btn.addEventListener("click", () => { m.kind = "close"; drawMatches(card); });
+      li.appendChild(btn);
+    } else {
+      li.className = "missing";
+      li.textContent = "✗ " + m.wanted + " — not found in " + attachDir.name;
+    }
+    list.appendChild(li);
+  }
+}
+
+// Creates category/name/, files the matched attachments into it, then writes
+// the Markdown (with its checklist reflecting what was actually filed).
+async function saveIntoFolder(category, name, markdown, allMatches, move) {
   const catDir = await baseDir.getDirectoryHandle(category, { create: true });
   const emailDir = await catDir.getDirectoryHandle(name, { create: true });
+  const copied = [], failed = [];
+  for (const m of allMatches) {
+    if (m.kind !== "exact" && m.kind !== "close") continue;
+    try { await copyAttachment(m.file.handle, emailDir, move); copied.push(m); }
+    catch (e) { failed.push(m); }
+  }
+  if (allMatches.length) markdown = tickChecklist(markdown, allMatches, copied);
   const fileHandle = await emailDir.getFileHandle(name + ".md", { create: true });
   const w = await fileHandle.createWritable();
   await w.write(new Blob([markdown], { type: "text/markdown" }));
   await w.close();
+  return { copied, failed, markdown };
+}
+
+function tickChecklist(markdown, allMatches, copied) {
+  let out = markdown;
+  for (const m of allMatches) {
+    const line = "- [ ] " + m.wanted + "\n";
+    if (copied.includes(m)) {
+      const note = m.file.name !== m.wanted ? " (filed as “" + m.file.name + "”)" : "";
+      out = out.replace(line, "- [x] " + m.wanted + note + "\n");
+    } else {
+      out = out.replace(line, "- [ ] " + m.wanted + " — not found in the Attachments folder\n");
+    }
+  }
+  return out;
 }
 
 /* ================= fallback saving: zip that expands to the folder ================= */
@@ -774,6 +1007,7 @@ function addCard(file) {
       "<button class='primary save'>Save to folder</button>" +
       "<button class='dlmd'>Download .md only</button>" +
     "</div>" +
+    "<ul class='att-list'></ul>" +
     "<div class='status busy'>Starting\u2026</div>" +
     "<div class='warnings'></div>" +
     "<details style='display:none'><summary>Preview Markdown</summary><pre></pre></details>";
@@ -795,6 +1029,9 @@ function showResult(card, result) {
   card.querySelector(".namerow").style.display = "flex";
   const saverow = card.querySelector(".saverow");
   saverow.style.display = "flex";
+  card._result = result;
+  card._matches = [];
+  renderAttachments(card);
   const sel = card.querySelector("select.category");
   fillCategorySelect(sel);
   const saveBtn = card.querySelector("button.save");
@@ -827,9 +1064,25 @@ function showResult(card, result) {
     localStorage.setItem("lastCategory", category);
     if (hasFolderApi && baseDir) {
       try {
-        await saveIntoFolder(category, name, result.markdown);
-        status.textContent = "Saved: " + (baseDir.name ? baseDir.name + " \u203a " : "") +
-          category + " \u203a " + name + " \u203a " + name + ".md \u2014 add the attachments to that folder.";
+        const move = document.getElementById("moveAttach").checked;
+        const { copied, failed, markdown } =
+          await saveIntoFolder(category, name, result.markdown, card._matches, move);
+        card.querySelector("pre").textContent = markdown;
+        const where = (baseDir.name ? baseDir.name + " \u203a " : "") +
+          category + " \u203a " + name + " \u203a " + name + ".md";
+        const total = result.attachmentNames.length;
+        let attNote = "";
+        if (total) {
+          const missing = card._matches.filter(m => !copied.includes(m)).map(m => m.wanted);
+          attNote = copied.length === total
+            ? " \u2014 all " + total + " attachment" + (total > 1 ? "s" : "") + (move ? " moved" : " copied") + " into that folder."
+            : " \u2014 " + copied.length + " of " + total + " attachments " + (move ? "moved" : "copied") +
+              ". Still missing: " + missing.join("; ") + ".";
+          if (failed.length) attNote += " Could not copy: " + failed.map(m => m.file.name).join("; ") + ".";
+          if (!attachDir) attNote = " \u2014 add the " + total + " attachment" + (total > 1 ? "s" : "") + " to that folder.";
+        }
+        status.textContent = "Saved: " + where + attNote;
+        if (attachDir && move && copied.length) renderAttachments(card);
       } catch (e) {
         status.textContent = "Could not save: " + (e.message || e);
         status.classList.add("busy");
@@ -883,11 +1136,18 @@ drop.addEventListener("drop", e => {
 });
 fileInput.addEventListener("change", () => { handleFiles(fileInput.files); fileInput.value = ""; });
 document.getElementById("chooseFolder").addEventListener("click", chooseFolder);
+document.getElementById("chooseAttach").addEventListener("click", chooseAttachFolder);
+const moveBox = document.getElementById("moveAttach");
+moveBox.checked = localStorage.getItem("moveAttachments") === "1";
+moveBox.addEventListener("change", () => localStorage.setItem("moveAttachments", moveBox.checked ? "1" : "0"));
 
 refreshCategories(); // presets are available even before a folder is connected
 if (!hasFolderApi) {
   document.getElementById("folderName").textContent = "not supported in this browser";
   document.getElementById("chooseFolder").style.display = "none";
+  document.getElementById("attachName").textContent = "not supported in this browser";
+  document.getElementById("chooseAttach").style.display = "none";
+  document.getElementById("attachHint").style.display = "none";
   document.getElementById("folderHint").textContent =
     "This browser can't create folders directly (use Chrome or Edge for that). " +
     "You'll get a small .zip per email instead — unzipping it in your category folder creates the email's folder.";
