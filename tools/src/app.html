@@ -924,11 +924,6 @@ function fillCategorySelect(sel) {
   const extra = document.createElement("option");
   extra.value = "__new__"; extra.textContent = "+ New category folder\u2026";
   sel.appendChild(extra);
-  if (hasFolderApi) {
-    const anywhere = document.createElement("option");
-    anywhere.value = "__anywhere__"; anywhere.textContent = "Choose any other folder\u2026";
-    sel.appendChild(anywhere);
-  }
   if (prev && [...sel.options].some(o => o.value === prev)) sel.value = prev;
 }
 
@@ -1094,8 +1089,8 @@ function showResult(card, result) {
   if (hasFolderApi) {
     saveBtn.disabled = false;
     status.textContent = baseDir
-      ? "Ready — pick a category or choose any other folder."
-      : "Ready — choose your email home folder above, or select “Choose any other folder”.";
+      ? "Ready — pick a category."
+      : "Ready — choose your email home folder above.";
     status.classList.remove("busy");
   } else {
     saveBtn.textContent = "Download folder (.zip)";
@@ -1107,17 +1102,6 @@ function showResult(card, result) {
   saveBtn.addEventListener("click", async () => {
     const name = sanitizeName(nameInput.value || result.name);
     let category = sel.value;
-    if (category === "__anywhere__") {
-      try {
-        const chosenDir = await window.showDirectoryPicker({ mode: "readwrite" });
-        await saveIntoDirectory(chosenDir, name, result.markdown, result.attachments);
-        status.textContent = "Saved: " + chosenDir.name + " \u203a " + name + " — Markdown and " +
-          result.attachments.length + " attachment" + (result.attachments.length === 1 ? "" : "s") + " saved together.";
-      } catch (e) {
-        if (e && e.name !== "AbortError") status.textContent = "Could not save: " + (e.message || e);
-      }
-      return;
-    }
     if (category === "__new__") {
       category = (window.prompt("Name the new category folder:") || "").trim();
       if (!category) return;
