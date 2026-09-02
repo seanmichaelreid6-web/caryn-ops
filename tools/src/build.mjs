@@ -9,12 +9,23 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { buildSync } from "esbuild";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const assetDir = process.argv[2] || here;
 const nm = join(assetDir, "node_modules");
 
+const emailParsers = buildSync({
+  entryPoints: [join(here, "email-parsers.js")],
+  bundle: true,
+  platform: "browser",
+  format: "iife",
+  write: false,
+  minify: true,
+}).outputFiles[0].text;
+
 const assets = {
+  "/*__EMAIL_PARSERS__*/": emailParsers,
   "/*__PDFJS__*/": readFileSync(join(nm, "pdfjs-dist", "legacy", "build", "pdf.min.js"), "utf8"),
   "/*__PDFJS_WORKER__*/": readFileSync(join(nm, "pdfjs-dist", "legacy", "build", "pdf.worker.min.js"), "utf8"),
   "/*__TESS__*/": readFileSync(join(nm, "tesseract.js", "dist", "tesseract.min.js"), "utf8"),

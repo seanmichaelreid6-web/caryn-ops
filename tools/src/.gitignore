@@ -1,0 +1,5 @@
+node_modules/
+eng.traineddata.gz
+parser-debug.js
+test-email.msg
+test-harness.html

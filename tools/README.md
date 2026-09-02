@@ -1,93 +1,109 @@
-# Email PDF → Markdown converter
+# Outlook Email → Markdown Archive
 
-`email-pdf-to-markdown.html` is a single-file tool that turns emails you've
-saved as PDFs into organized folders with Markdown files inside. It runs
-entirely in your web browser — no installation, no internet connection needed,
-and your emails never leave your computer.
+`email-pdf-to-markdown.html` is a single-file, offline tool that turns saved
+Outlook emails into organized folders for your context system. Despite the old
+filename (kept so existing links do not break), the recommended inputs are now
+**`.eml` and `.msg`**, not PDF.
 
-It reads both kinds of email PDFs:
+Each saved folder contains:
 
-- **Normal PDFs** (made with "Save as PDF") — converted instantly.
-- **Image-only PDFs** (made with "Microsoft Print to PDF", which saves the
-  email as a picture) — read with the built-in OCR engine. This takes a few
-  seconds per page.
+- A clean Markdown copy of the email, including From, Sent, To, Cc, subject,
+  message text, and links to its attachments.
+- The email's regular attachments, extracted automatically with their original
+  contents and filenames.
 
-## How to get it
+The tool runs entirely in Chrome or Edge. Your work email and attachments never
+leave your computer.
 
-1. Open `tools/email-pdf-to-markdown.html` in this repository on GitHub.
-2. Click the **Download raw file** button (the down-arrow icon near the top right).
-3. Save it anywhere on your computer — your Desktop is fine.
+## The new workflow
+
+You no longer need to print the email, print each attachment, or match files on
+your Desktop.
+
+1. Save the complete message from Outlook as an `.eml` or `.msg` file.
+2. Drop that one file into this tool.
+3. Pick a category and click **Save to folder**.
+
+The tool creates the Markdown email and extracts its attachments into the same
+folder in one step.
+
+## Save a complete message from Outlook
+
+### New Outlook for Windows
+
+Open or select the message, choose **More actions (…) → Save as**, and save it
+to your Desktop or Downloads folder. You can also drag a message from Outlook
+to your Desktop; new Outlook normally creates an `.eml` file.
+
+### Classic Outlook for Windows
+
+Double-click the message, choose **File → Save As**, and keep the default
+Outlook message format (`.msg`). Dragging a message from Outlook to your Desktop
+also normally creates a `.msg` file.
+
+### Outlook on the web
+
+Open or select the message, choose **More actions (…) → Download**, then use the
+downloaded `.eml` or `.msg` file.
+
+Microsoft's current instructions are here:
+[Save an Outlook message as a file](https://support.microsoft.com/en-US/Outlook/mail/save-an-outlook-message-as-a-eml-file-a-pdf-file-or-as-a-draft).
 
 ## One-time setup
 
-1. Double-click the saved `email-pdf-to-markdown.html` file. It opens in your
-   web browser (Chrome or Edge recommended).
-2. Click **Choose folder** at the top and pick your email home folder — the
-   folder that holds (or will hold) your category folders, for example a
-   folder on your Desktop. The browser will ask you to allow access; click
-   **Allow** (choose "Allow on every visit" if offered, so you aren't asked again).
+1. Download `email-pdf-to-markdown.html` from this repository. On GitHub, open
+   the file and click the **Download raw file** button (the down arrow).
+2. Double-click the downloaded file to open it in Chrome or Edge.
+3. Click **Choose folder** and select the folder that holds your email category
+   folders. Click **Allow** when the browser asks for access.
 
-## Converting an email
+## Archive an email
 
-1. Drag the email PDF onto the drop area (or click it to pick the file).
-   You can drop several at once.
-2. The tool reads the email and suggests a name in the form
-   **`Subject From Sender Month Day`** — for example
-   `Rates and Cost for the Fixed Indemnity LM on Ind Product From MaryKate Ellis May 15`.
-   Edit the name if you want (for example, shortening the sender to a first name).
-3. Pick the category to file it under — your categories (Everest Emails,
-   Optimed Agency Emails, Paysign emails, Billing Emails, IQ emails,
-   FTC Emails, Sent emails) are built in, any folders already inside your home
-   folder are offered too, and **+ New category folder…** creates a new one.
-4. Click **Save to folder**. The tool creates:
+1. Drop one or more `.eml` or `.msg` files into the large drop area.
+2. Review the proposed name. The default format is
+   **`Subject From Sender Month Day`**.
+3. Pick a category. The existing category list is still included, and you can
+   create another category when needed.
+4. Click **Save to folder**.
 
-   ```
-   [your home folder]/
-     Everest Emails/
-       Rates and Cost ... From MaryKate Ellis May 15/     ← the email's folder
-         Rates and Cost ... From MaryKate Ellis May 15.md ← the Markdown file
-   ```
+The result looks like this:
 
-5. Drag the email's attachments into that same folder. If the email listed
-   attachments, the Markdown file includes them as a checklist so you can
-   confirm you've got them all.
+```text
+[email home folder]/
+  Everest Emails/
+    Rates and Cost From Mary Kate Ellis September 1/
+      Rates and Cost From Mary Kate Ellis September 1.md
+      updated-rates.xlsx
+      plan-summary.pdf
+```
 
-## What the Markdown contains
+Embedded signature graphics and tracking/logo images are ignored so they do not
+clutter the archive. Normal attachments are saved. Duplicate attachment names
+are made unique automatically.
 
-The subject as a title, then each message in the thread with its
-**From / Sent / To / Cc** lines, the attachment checklist, and the message
-text. Characters not allowed in file names (`: / \ ? * " < > |`) are removed
-automatically, and a `[Draft]` tag on the subject is stripped.
+## PDF fallback
 
-## Good to know
+Old email PDFs still work. PDFs with real text convert immediately; image-only
+PDFs are read with the built-in OCR engine. A PDF cannot contain the original
+Outlook attachments, so only `.eml` or `.msg` gives you automatic attachment
+extraction.
 
-- The **date** in the name is the date of the latest message in the thread.
-  Ambiguous numeric dates like `3/4/2026` are read the US way (March 4).
-- **Firefox and Safari** can't create folders directly from a web page. There
-  the Save button becomes **Download folder (.zip)** — unzip it inside your
-  category folder and you get the same result.
-- **Tip:** when saving emails from Outlook, choosing **Save as PDF** as the
-  print destination (instead of **Microsoft Print to PDF**) produces PDFs
-  with real text — they convert instantly and with perfect accuracy, and
-  they're searchable too. Image-only PDFs still work via OCR, but OCR can
-  occasionally misread a character.
-- If the tool can't find a subject, sender, or date, it falls back to the
-  PDF's own title and stored date and tells you what it did — and you can
-  always edit the name before saving.
+Firefox and Safari cannot create folders directly from a local webpage. In
+those browsers the tool downloads a `.zip` containing the same Markdown and
+attachment files. Chrome or Edge is recommended.
 
-## Rebuilding the tool (for developers)
+## Rebuilding the tool
 
-The tool is generated from `src/app.html` (page, parsing, and UI logic) with
-[pdf.js](https://mozilla.github.io/pdf.js/) (PDF reading) and
-[tesseract.js](https://tesseract.projectnaptha.com/) (OCR) inlined so the
-single file works offline:
+The source is `src/app.html`. The build bundles the `.eml` and `.msg` parsers,
+PDF reader, OCR runtime, and English OCR data into one offline HTML file.
 
-```bash
+```powershell
 cd tools/src
-npm install pdfjs-dist@3.11.174 tesseract.js@5 --no-save
-curl -sSL -o eng.traineddata https://raw.githubusercontent.com/tesseract-ocr/tessdata_fast/4.1.0/eng.traineddata
-gzip -9 eng.traineddata
-node build.mjs
+npm install
+Invoke-WebRequest `
+  -Uri "https://tessdata.projectnaptha.com/4.0.0/eng.traineddata.gz" `
+  -OutFile "eng.traineddata.gz"
+npm run build
 ```
 
 This rewrites `tools/email-pdf-to-markdown.html`.
