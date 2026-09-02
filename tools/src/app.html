@@ -1,6 +1,6 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Email PDF → Markdown</title>
+<title>Outlook Email → Markdown Archive</title>
 <style>
   :root {
     --bg: #f6f7f9; --card: #ffffff; --text: #1a2233; --muted: #5b6472;
@@ -82,11 +82,11 @@
 </style>
 
 <main>
-  <h1>Email PDF &rarr; Markdown</h1>
-  <p class="sub">Drop a saved email PDF below. Each email gets its own folder — named
-  <b>Subject From Sender Month Day</b> — inside the category you choose, with the
-  Markdown file saved inside it. Add the email's attachments to the same folder and
-  everything stays together. Nothing is uploaded anywhere.</p>
+  <h1>Outlook Email &rarr; Markdown Archive</h1>
+  <p class="sub">Save or drag an email out of Outlook, then drop the resulting
+  <b>.eml</b> or <b>.msg</b> file here. The tool creates a named folder containing the
+  Markdown email and every real attachment automatically. PDF remains available as a
+  fallback. Everything runs on this computer; nothing is uploaded.</p>
 
   <div id="folderBar">
     <span class="label">Email home folder:</span>
@@ -99,20 +99,23 @@
   </div>
 
   <label id="drop">
-    <div class="big">Drop email PDFs here</div>
-    <div class="hint">or click to choose files</div>
-    <input type="file" id="fileInput" accept=".pdf,application/pdf" multiple>
+    <div class="big">Drop saved Outlook emails here</div>
+    <div class="hint">.eml or .msg recommended &middot; .pdf also supported &middot; or click to choose files</div>
+    <input type="file" id="fileInput" accept=".eml,.msg,.pdf,message/rfc822,application/vnd.ms-outlook,application/pdf" multiple>
   </label>
 
   <div id="results"></div>
 
-  <footer>Works with Outlook email PDFs, including image-only ones made by
-  &ldquo;Microsoft Print to PDF&rdquo; (those are read with built-in OCR, which takes a few
-  seconds per page). Tip: when printing from Outlook, choosing &ldquo;Save as PDF&rdquo;
-  as the printer instead of &ldquo;Microsoft Print to PDF&rdquo; produces PDFs that convert
-  faster and more accurately. Ambiguous numeric dates like 3/4/2026 are read as
-  month/day (US style).</footer>
+  <footer><b>New Outlook / Outlook on the web:</b> open the message and choose
+  More actions &rarr; Save as or Download; you can also drag it to your Desktop.
+  <b>Classic Outlook:</b> open the message and choose File &rarr; Save As, or drag it
+  to your Desktop. The saved .eml/.msg already contains its attachments, so do not
+  save or print them separately.</footer>
 </main>
+
+<script id="email-parsers">
+/*__EMAIL_PARSERS__*/
+</script>
 
 <script id="pdfjs-lib">
 /*__PDFJS__*/
@@ -518,6 +521,153 @@ function sanitizeName(s) {
   return (cleaned || "email").slice(0, 120).trim();
 }
 
+function sanitizeAttachmentName(s) {
+  return sanitizeName((s || "attachment").replace(/[\\/]/g, " ")) || "attachment";
+}
+
+function uniqueAttachments(items, reservedNames) {
+  const used = new Set((reservedNames || []).map(n => n.toLowerCase()));
+  return items.map((item, index) => {
+    let original = sanitizeAttachmentName(item.name || ("attachment-" + (index + 1)));
+    const dot = original.lastIndexOf(".");
+    const stem = dot > 0 ? original.slice(0, dot) : original;
+    const ext = dot > 0 ? original.slice(dot) : "";
+    let name = original, n = 2;
+    while (used.has(name.toLowerCase())) name = stem + " (" + n++ + ")" + ext;
+    used.add(name.toLowerCase());
+    return { name, bytes: item.bytes instanceof Uint8Array ? item.bytes : new Uint8Array(item.bytes) };
+  });
+}
+
+function addressText(address) {
+  if (!address) return "";
+  if (address.group) return address.group.map(addressText).filter(Boolean).join(", ");
+  const name = (address.name || "").trim();
+  const email = (address.address || "").trim();
+  if (name && email && name.toLowerCase() !== email.toLowerCase()) return name + " <" + email + ">";
+  return name || email;
+}
+
+function addressListText(list) {
+  return (list || []).map(addressText).filter(Boolean).join(", ");
+}
+
+function htmlToPlainText(html) {
+  if (!html) return "";
+  const withBreaks = html
+    .replace(/<br\s*\/?\s*>/gi, "\n")
+    .replace(/<\/(p|div|li|tr|h[1-6]|blockquote)>/gi, "\n")
+    .replace(/<li\b[^>]*>/gi, "- ");
+  const doc = new DOMParser().parseFromString(withBreaks, "text/html");
+  doc.querySelectorAll("script,style,noscript").forEach(el => el.remove());
+  return (doc.body.textContent || "")
+    .replace(/\u00a0/g, " ")
+    .replace(/[ \t]+\n/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+function directMarkdown(meta, attachments) {
+  let md = "# " + meta.subject + "\n\n";
+  if (meta.from) md += "**From:** " + escapeHeaderValue(meta.from) + "  \n";
+  if (meta.sent) md += "**Sent:** " + escapeHeaderValue(meta.sent) + "  \n";
+  if (meta.to) md += "**To:** " + escapeHeaderValue(meta.to) + "  \n";
+  if (meta.cc) md += "**Cc:** " + escapeHeaderValue(meta.cc) + "  \n";
+  if (meta.bcc) md += "**Bcc:** " + escapeHeaderValue(meta.bcc) + "  \n";
+  if (attachments.length) {
+    md += "\n## Attachments (" + attachments.length + ")\n\n";
+    for (const a of attachments) md += "- [" + a.name.replace(/[\[\]]/g, "") + "](./" + encodeURI(a.name) + ")\n";
+  }
+  if (meta.body) md += "\n## Message\n\n" + meta.body.trim() + "\n";
+  return md;
+}
+
+function resultFromDirect(file, meta, attachments, warnings, sourceFormat) {
+  const subject = (meta.subject || file.name.replace(/\.(eml|msg)$/i, "") || "Email")
+    .replace(/^[\[\(]\s*draft\s*[\]\)]\s*/i, "").trim();
+  let date = new Date(meta.sent || file.lastModified || Date.now());
+  if (isNaN(date.getTime())) {
+    date = new Date(file.lastModified || Date.now());
+    warnings.push("The email date could not be read, so the file date was used for the folder name.");
+  }
+  const sender = senderNameOf({ fields: { from: meta.from || "" } });
+  let name = sanitizeName(subject);
+  if (sender) name += " From " + sanitizeName(sender);
+  name += " " + MONTH_FULL[date.getMonth()] + " " + date.getDate();
+  const finalName = sanitizeName(name);
+  const cleaned = uniqueAttachments(attachments, [finalName + ".md"]);
+  meta.subject = subject;
+  return {
+    name: finalName, subject, sender, date, warnings,
+    messageCount: 1, usedOcr: false, sourceFormat, attachments: cleaned,
+    markdown: directMarkdown(meta, cleaned),
+  };
+}
+
+async function convertEml(file, onStatus) {
+  onStatus("Reading complete email and attachments\u2026");
+  const email = await EmailParsers.PostalMime.parse(await file.arrayBuffer(), {
+    attachmentEncoding: "arraybuffer",
+  });
+  const warnings = [];
+  const skippedInline = (email.attachments || []).filter(a => a.related || a.disposition === "inline").length;
+  if (skippedInline) warnings.push(skippedInline + " embedded signature/logo image" + (skippedInline === 1 ? " was" : "s were") + " omitted; regular attachments are preserved.");
+  const attachments = (email.attachments || [])
+    .filter(a => !a.related && a.disposition !== "inline")
+    .map((a, i) => ({
+      name: a.filename || ("attachment-" + (i + 1)),
+      bytes: a.content instanceof Uint8Array ? a.content : new Uint8Array(a.content),
+    }));
+  const meta = {
+    subject: email.subject || "",
+    from: addressText(email.from || email.sender),
+    sent: ((email.headers || []).find(h => h.key === "date") || {}).value || email.date || "",
+    to: addressListText(email.to), cc: addressListText(email.cc), bcc: addressListText(email.bcc),
+    body: (email.text || htmlToPlainText(email.html || "")).trim(),
+  };
+  if (!meta.body) warnings.push("No readable message body was found, but the email headers and attachments were preserved.");
+  return resultFromDirect(file, meta, attachments, warnings, "EML");
+}
+
+async function convertMsg(file, onStatus) {
+  onStatus("Reading complete Outlook message and attachments\u2026");
+  const reader = new EmailParsers.MsgReader(await file.arrayBuffer());
+  const info = reader.getFileData();
+  if (info.error) throw new Error(info.error);
+  const warnings = [];
+  const attachments = [];
+  let skippedInline = 0;
+  for (const descriptor of info.attachments || []) {
+    if (descriptor.attachmentHidden && descriptor.pidContentId) { skippedInline++; continue; }
+    try {
+      const a = reader.getAttachment(descriptor);
+      attachments.push({ name: a.fileName || descriptor.fileName || descriptor.name, bytes: a.content });
+    } catch (e) {
+      warnings.push("Could not extract attachment " + (descriptor.fileName || descriptor.name || "(unnamed)") + ".");
+    }
+  }
+  if (skippedInline) warnings.push(skippedInline + " embedded signature/logo image" + (skippedInline === 1 ? " was" : "s were") + " omitted; regular attachments are preserved.");
+  const recipients = info.recipients || [];
+  const recips = kind => recipients.filter(r => r.recipType === kind).map(r => {
+    const name = (r.name || "").trim(), email = (r.email || "").trim();
+    return name && email && name.toLowerCase() !== email.toLowerCase() ? name + " <" + email + ">" : name || email;
+  }).filter(Boolean).join(", ");
+  let html = info.bodyHtml || "";
+  if (!html && info.html) html = new TextDecoder("utf-8").decode(info.html);
+  const senderEmail = info.creatorSMTPAddress || info.senderEmail || "";
+  const senderName = info.senderName || "";
+  const from = senderName && senderEmail && senderName.toLowerCase() !== senderEmail.toLowerCase()
+    ? senderName + " <" + senderEmail + ">" : senderName || senderEmail;
+  const meta = {
+    subject: info.subject || "", from,
+    sent: info.clientSubmitTime || info.messageDeliveryTime || info.creationTime || "",
+    to: recips("to"), cc: recips("cc"), bcc: recips("bcc"),
+    body: (info.body || htmlToPlainText(html)).trim(),
+  };
+  if (!meta.body) warnings.push("No readable message body was found, but the email headers and attachments were preserved.");
+  return resultFromDirect(file, meta, attachments, warnings, "MSG");
+}
+
 /* ================= conversion pipeline ================= */
 async function convertPdf(file, onStatus) {
   const data = new Uint8Array(await file.arrayBuffer());
@@ -586,7 +736,8 @@ async function convertPdf(file, onStatus) {
   name = sanitizeName(name);
 
   const markdown = buildMarkdown(subject, messages, preamble);
-  return { name, markdown, subject, sender, date, messageCount: messages.length, usedOcr, warnings };
+  return { name, markdown, subject, sender, date, messageCount: messages.length, usedOcr,
+    warnings, sourceFormat: "PDF", attachments: [] };
 }
 
 /* ================= saving: real folders via the File System Access API ================= */
@@ -695,13 +846,19 @@ async function restoreFolder() {
   } catch (e) { /* stored handle unusable; user picks again */ }
 }
 
-async function saveIntoFolder(category, name, markdown) {
+async function saveIntoFolder(category, name, markdown, attachments) {
   const catDir = await baseDir.getDirectoryHandle(category, { create: true });
   const emailDir = await catDir.getDirectoryHandle(name, { create: true });
   const fileHandle = await emailDir.getFileHandle(name + ".md", { create: true });
   const w = await fileHandle.createWritable();
   await w.write(new Blob([markdown], { type: "text/markdown" }));
   await w.close();
+  for (const attachment of attachments || []) {
+    const attachmentHandle = await emailDir.getFileHandle(attachment.name, { create: true });
+    const aw = await attachmentHandle.createWritable();
+    await aw.write(attachment.bytes);
+    await aw.close();
+  }
 }
 
 /* ================= fallback saving: zip that expands to the folder ================= */
@@ -784,12 +941,16 @@ function addCard(file) {
 
 function showResult(card, result) {
   card.querySelector(".meta").innerHTML =
-    "From <b></b> &middot; <span class='count'></span>" + (result.usedOcr ? " &middot; read with OCR" : "");
+    "From <b></b> &middot; <span class='format'></span> &middot; <span class='count'></span> &middot; <span class='attcount'></span>" +
+    (result.usedOcr ? " &middot; read with OCR" : "");
   card.querySelector(".meta b").textContent = card.dataset.origName;
+  card.querySelector(".format").textContent = result.sourceFormat;
   card.querySelector(".count").textContent =
     result.messageCount === 1 ? "1 message" :
     result.messageCount === 0 ? "no email headers found" :
     result.messageCount + " messages in thread";
+  card.querySelector(".attcount").textContent = result.attachments.length === 1
+    ? "1 attachment ready" : result.attachments.length + " attachments ready";
   const nameInput = card.querySelector("input.name");
   nameInput.value = result.name;
   card.querySelector(".namerow").style.display = "flex";
@@ -827,16 +988,19 @@ function showResult(card, result) {
     localStorage.setItem("lastCategory", category);
     if (hasFolderApi && baseDir) {
       try {
-        await saveIntoFolder(category, name, result.markdown);
+        await saveIntoFolder(category, name, result.markdown, result.attachments);
         status.textContent = "Saved: " + (baseDir.name ? baseDir.name + " \u203a " : "") +
-          category + " \u203a " + name + " \u203a " + name + ".md \u2014 add the attachments to that folder.";
+          category + " \u203a " + name + " \u2014 Markdown and " + result.attachments.length +
+          " attachment" + (result.attachments.length === 1 ? "" : "s") + " saved together.";
       } catch (e) {
         status.textContent = "Could not save: " + (e.message || e);
         status.classList.add("busy");
       }
     } else {
       const data = new TextEncoder().encode(result.markdown);
-      download(name + ".zip", makeZip([{ path: name + "/" + name + ".md", data }]));
+      const entries = [{ path: name + "/" + name + ".md", data }];
+      for (const a of result.attachments) entries.push({ path: name + "/" + a.name, data: a.bytes });
+      download(name + ".zip", makeZip(entries));
       status.textContent = "Downloaded " + name + ".zip \u2014 unzip it inside your \u201C" +
         category + "\u201D folder.";
     }
@@ -858,13 +1022,15 @@ function showResult(card, result) {
 }
 
 async function handleFiles(fileList) {
-  const files = [...fileList].filter(f => /\.pdf$/i.test(f.name) || f.type === "application/pdf");
+  const files = [...fileList].filter(f => /\.(eml|msg|pdf)$/i.test(f.name));
   for (const file of files) {
     const card = addCard(file);
     card.dataset.origName = file.name;
     const status = card.querySelector(".status");
     try {
-      const result = await convertPdf(file, msg => { status.textContent = msg; });
+      const convert = /\.eml$/i.test(file.name) ? convertEml :
+        /\.msg$/i.test(file.name) ? convertMsg : convertPdf;
+      const result = await convert(file, msg => { status.textContent = msg; });
       showResult(card, result);
     } catch (e) {
       card.classList.add("error");
