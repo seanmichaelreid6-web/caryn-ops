@@ -22,7 +22,7 @@ your Desktop.
 
 1. Save the complete message from Outlook as an `.eml` or `.msg` file.
 2. Drop the file into this tool.
-3. Pick a category or choose any other folder, then click **Save to folder**.
+3. Pick a category and click **Save to folder**.
 
 The tool creates the Markdown email and extracts its attachments into the same
 folder in one step.
@@ -76,8 +76,7 @@ Microsoft's current instructions are here:
 1. Drop one or more `.eml` or `.msg` files into the large drop area.
 2. Review the proposed name. The default format is
    **`Date_From Sender_To Recipients_Subject_number of attachments`**.
-3. Pick a preset category, choose **+ New category folder…**, or choose
-   **Choose any other folder…** to save somewhere else on your computer.
+3. Pick a preset category or choose **+ New category folder…**.
 4. Click **Save to folder**.
 
 The result looks like this:
