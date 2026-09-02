@@ -86,7 +86,9 @@
   <p class="sub">Save or drag an email out of Outlook, then drop the resulting
   <b>.eml</b> or <b>.msg</b> file here. The tool creates a named folder containing the
   Markdown email and every real attachment automatically. PDF remains available as a
-  fallback. Everything runs on this computer; nothing is uploaded.</p>
+  fallback. To archive a whole thread, drop all of its saved messages together; messages
+  with the same subject are combined into one folder. Everything runs on this computer;
+  nothing is uploaded.</p>
 
   <div id="folderBar">
     <span class="label">Email home folder:</span>
@@ -100,7 +102,7 @@
 
   <label id="drop">
     <div class="big">Drop saved Outlook emails here</div>
-    <div class="hint">.eml or .msg recommended &middot; .pdf also supported &middot; or click to choose files</div>
+    <div class="hint">Select every message in a thread together to combine all of their attachments &middot; .eml, .msg, or .pdf</div>
     <input type="file" id="fileInput" accept=".eml,.msg,.pdf,message/rfc822,application/vnd.ms-outlook,application/pdf" multiple>
   </label>
 
@@ -535,8 +537,52 @@ function uniqueAttachments(items, reservedNames) {
     let name = original, n = 2;
     while (used.has(name.toLowerCase())) name = stem + " (" + n++ + ")" + ext;
     used.add(name.toLowerCase());
-    return { name, bytes: item.bytes instanceof Uint8Array ? item.bytes : new Uint8Array(item.bytes) };
+    return { ...item, name, bytes: item.bytes instanceof Uint8Array ? item.bytes : new Uint8Array(item.bytes) };
   });
+}
+
+function baseSubjectOf(subject) {
+  return (subject || "Email")
+    .replace(/^[\[\(]\s*draft\s*[\]\)]\s*/i, "")
+    .replace(/^\s*((re|fw|fwd)\s*:\s*)+/i, "")
+    .trim() || "Email";
+}
+
+function shortPersonName(name, email) {
+  let value = (name || "").trim().replace(/^['"]|['"]$/g, "");
+  if (!value || value.includes("@") || value.startsWith("/")) {
+    value = (email || value).split("@")[0].replace(/[._]+/g, " ");
+  }
+  value = value.replace(/<.*$/, "").trim();
+  const first = value.split(/\s+/)[0] || "";
+  return first ? first.charAt(0).toUpperCase() + first.slice(1) : "";
+}
+
+function shortAddressNames(list) {
+  const names = [];
+  const visit = address => {
+    if (!address) return;
+    if (address.group) { address.group.forEach(visit); return; }
+    const name = shortPersonName(address.name, address.address);
+    if (name && !names.some(n => n.toLowerCase() === name.toLowerCase())) names.push(name);
+  };
+  (list || []).forEach(visit);
+  return names;
+}
+
+function formatArchiveDate(date) {
+  return MONTH_FULL[date.getMonth()] + " " + date.getDate();
+}
+
+function buildArchiveName(date, fromShort, recipientShorts, subject, attachmentCount) {
+  const datePart = formatArchiveDate(date);
+  const fromPart = fromShort || "Unknown";
+  const toPart = (recipientShorts || []).length ? recipientShorts.join(",") : "Unknown";
+  const suffix = "_" + attachmentCount + " attachment" + (attachmentCount === 1 ? "" : "s");
+  const prefix = datePart + "_From " + fromPart + "_To " + toPart + "_";
+  const cleanSubject = sanitizeName(baseSubjectOf(subject));
+  const subjectRoom = Math.max(12, 120 - prefix.length - suffix.length);
+  return sanitizeName(prefix + cleanSubject.slice(0, subjectRoom).trim() + suffix);
 }
 
 function addressText(address) {
@@ -582,25 +628,94 @@ function directMarkdown(meta, attachments) {
   return md;
 }
 
+function messageHeaderMarkdown(meta) {
+  let md = "";
+  if (meta.from) md += "**From:** " + escapeHeaderValue(meta.from) + "  \n";
+  if (meta.sent) md += "**Sent:** " + escapeHeaderValue(meta.sent) + "  \n";
+  if (meta.to) md += "**To:** " + escapeHeaderValue(meta.to) + "  \n";
+  if (meta.cc) md += "**Cc:** " + escapeHeaderValue(meta.cc) + "  \n";
+  if (meta.bcc) md += "**Bcc:** " + escapeHeaderValue(meta.bcc) + "  \n";
+  return md;
+}
+
+function currentMessageBody(body) {
+  const lines = (body || "").replace(/\r\n/g, "\n").split("\n");
+  for (let i = 1; i < lines.length; i++) {
+    if (/^\s*On .+ wrote:\s*$/i.test(lines[i]) || /^\s*-{2,}\s*(Original|Forwarded) Message\s*-{2,}\s*$/i.test(lines[i])) {
+      return lines.slice(0, i).join("\n").trim();
+    }
+    if (/^\s*From\s*:/i.test(lines[i])) {
+      const lookahead = lines.slice(i + 1, i + 8).join("\n");
+      if (/^\s*(Sent|Date)\s*:/im.test(lookahead) && /^\s*(To|Subject)\s*:/im.test(lookahead)) {
+        return lines.slice(0, i).join("\n").trim();
+      }
+    }
+  }
+  return lines.join("\n").trim();
+}
+
+function buildThreadMarkdown(subject, results, attachments) {
+  let md = "# " + subject + "\n\n";
+  md += "**Messages saved:** " + results.length + "  \n";
+  md += "**Attachments saved:** " + attachments.length + "\n";
+  if (attachments.length) {
+    md += "\n## All attachments (" + attachments.length + ")\n\n";
+    for (const a of attachments) md += "- [" + a.name.replace(/[\[\]]/g, "") + "](./" + encodeURI(a.name) + ")\n";
+  }
+  results.forEach((result, index) => {
+    const meta = result.messageMeta;
+    md += "\n---\n\n## Message " + (index + 1) + " of " + results.length + "\n\n";
+    md += messageHeaderMarkdown(meta);
+    const messageAttachments = attachments.filter(a => a.sourceIndex === index);
+    if (messageAttachments.length) {
+      md += "\n**Attachments on this message (" + messageAttachments.length + "):**\n\n";
+      for (const a of messageAttachments) md += "- [" + a.name.replace(/[\[\]]/g, "") + "](./" + encodeURI(a.name) + ")\n";
+    }
+    const body = currentMessageBody(meta.body);
+    if (body) md += "\n" + body + "\n";
+  });
+  return md;
+}
+
 function resultFromDirect(file, meta, attachments, warnings, sourceFormat) {
-  const subject = (meta.subject || file.name.replace(/\.(eml|msg)$/i, "") || "Email")
-    .replace(/^[\[\(]\s*draft\s*[\]\)]\s*/i, "").trim();
+  const subject = baseSubjectOf(meta.subject || file.name.replace(/\.(eml|msg)$/i, "") || "Email");
   let date = new Date(meta.sent || file.lastModified || Date.now());
   if (isNaN(date.getTime())) {
     date = new Date(file.lastModified || Date.now());
     warnings.push("The email date could not be read, so the file date was used for the folder name.");
   }
-  const sender = senderNameOf({ fields: { from: meta.from || "" } });
-  let name = sanitizeName(subject);
-  if (sender) name += " From " + sanitizeName(sender);
-  name += " " + MONTH_FULL[date.getMonth()] + " " + date.getDate();
-  const finalName = sanitizeName(name);
+  const sender = meta.fromShort || senderNameOf({ fields: { from: meta.from || "" } });
+  const finalName = buildArchiveName(date, sender, meta.recipientShorts, subject, attachments.length);
   const cleaned = uniqueAttachments(attachments, [finalName + ".md"]);
   meta.subject = subject;
   return {
     name: finalName, subject, sender, date, warnings,
     messageCount: 1, usedOcr: false, sourceFormat, attachments: cleaned,
-    markdown: directMarkdown(meta, cleaned),
+    markdown: directMarkdown(meta, cleaned), messageMeta: meta,
+    threadKey: subject.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim(),
+    sourceNames: [file.name],
+  };
+}
+
+function mergeThreadResults(results) {
+  const sorted = [...results].sort((a, b) => a.date - b.date);
+  const latest = sorted[sorted.length - 1];
+  const subject = baseSubjectOf(latest.subject);
+  const rawAttachments = [];
+  sorted.forEach((result, sourceIndex) => {
+    for (const attachment of result.attachments) rawAttachments.push({ ...attachment, sourceIndex });
+  });
+  const name = buildArchiveName(latest.date, latest.messageMeta.fromShort || latest.sender,
+    latest.messageMeta.recipientShorts, subject, rawAttachments.length);
+  const attachments = uniqueAttachments(rawAttachments, [name + ".md"]);
+  const warnings = sorted.flatMap(r => r.warnings || []);
+  warnings.unshift("Combined " + sorted.length + " selected messages with the same subject into one thread archive.");
+  return {
+    name, subject, sender: latest.sender, date: latest.date, warnings,
+    messageCount: sorted.length, usedOcr: false,
+    sourceFormat: [...new Set(sorted.map(r => r.sourceFormat))].join("/") + " thread",
+    attachments, markdown: buildThreadMarkdown(subject, sorted, attachments),
+    sourceNames: sorted.flatMap(r => r.sourceNames || []), threadKey: latest.threadKey,
   };
 }
 
@@ -624,6 +739,8 @@ async function convertEml(file, onStatus) {
     sent: ((email.headers || []).find(h => h.key === "date") || {}).value || email.date || "",
     to: addressListText(email.to), cc: addressListText(email.cc), bcc: addressListText(email.bcc),
     body: (email.text || htmlToPlainText(email.html || "")).trim(),
+    fromShort: shortAddressNames([email.from || email.sender])[0] || "",
+    recipientShorts: shortAddressNames([...(email.to || []), ...(email.cc || [])]),
   };
   if (!meta.body) warnings.push("No readable message body was found, but the email headers and attachments were preserved.");
   return resultFromDirect(file, meta, attachments, warnings, "EML");
@@ -663,6 +780,10 @@ async function convertMsg(file, onStatus) {
     sent: info.clientSubmitTime || info.messageDeliveryTime || info.creationTime || "",
     to: recips("to"), cc: recips("cc"), bcc: recips("bcc"),
     body: (info.body || htmlToPlainText(html)).trim(),
+    fromShort: shortPersonName(senderName, senderEmail),
+    recipientShorts: recipients.filter(r => r.recipType === "to" || r.recipType === "cc")
+      .map(r => shortPersonName(r.name, r.smtpAddress || r.email)).filter((name, index, all) =>
+        name && all.findIndex(other => other.toLowerCase() === name.toLowerCase()) === index),
   };
   if (!meta.body) warnings.push("No readable message body was found, but the email headers and attachments were preserved.");
   return resultFromDirect(file, meta, attachments, warnings, "MSG");
@@ -737,7 +858,7 @@ async function convertPdf(file, onStatus) {
 
   const markdown = buildMarkdown(subject, messages, preamble);
   return { name, markdown, subject, sender, date, messageCount: messages.length, usedOcr,
-    warnings, sourceFormat: "PDF", attachments: [] };
+    warnings, sourceFormat: "PDF", attachments: [], sourceNames: [file.name] };
 }
 
 /* ================= saving: real folders via the File System Access API ================= */
@@ -803,6 +924,11 @@ function fillCategorySelect(sel) {
   const extra = document.createElement("option");
   extra.value = "__new__"; extra.textContent = "+ New category folder\u2026";
   sel.appendChild(extra);
+  if (hasFolderApi) {
+    const anywhere = document.createElement("option");
+    anywhere.value = "__anywhere__"; anywhere.textContent = "Choose any other folder\u2026";
+    sel.appendChild(anywhere);
+  }
   if (prev && [...sel.options].some(o => o.value === prev)) sel.value = prev;
 }
 
@@ -846,9 +972,8 @@ async function restoreFolder() {
   } catch (e) { /* stored handle unusable; user picks again */ }
 }
 
-async function saveIntoFolder(category, name, markdown, attachments) {
-  const catDir = await baseDir.getDirectoryHandle(category, { create: true });
-  const emailDir = await catDir.getDirectoryHandle(name, { create: true });
+async function saveIntoDirectory(parentDir, name, markdown, attachments) {
+  const emailDir = await parentDir.getDirectoryHandle(name, { create: true });
   const fileHandle = await emailDir.getFileHandle(name + ".md", { create: true });
   const w = await fileHandle.createWritable();
   await w.write(new Blob([markdown], { type: "text/markdown" }));
@@ -859,6 +984,11 @@ async function saveIntoFolder(category, name, markdown, attachments) {
     await aw.write(attachment.bytes);
     await aw.close();
   }
+}
+
+async function saveIntoFolder(category, name, markdown, attachments) {
+  const catDir = await baseDir.getDirectoryHandle(category, { create: true });
+  await saveIntoDirectory(catDir, name, markdown, attachments);
 }
 
 /* ================= fallback saving: zip that expands to the folder ================= */
@@ -962,10 +1092,10 @@ function showResult(card, result) {
   const status = card.querySelector(".status");
 
   if (hasFolderApi) {
-    saveBtn.disabled = !baseDir;
+    saveBtn.disabled = false;
     status.textContent = baseDir
-      ? "Ready — pick a category and click Save to folder."
-      : "Ready — choose your email home folder at the top first.";
+      ? "Ready — pick a category or choose any other folder."
+      : "Ready — choose your email home folder above, or select “Choose any other folder”.";
     status.classList.remove("busy");
   } else {
     saveBtn.textContent = "Download folder (.zip)";
@@ -977,6 +1107,17 @@ function showResult(card, result) {
   saveBtn.addEventListener("click", async () => {
     const name = sanitizeName(nameInput.value || result.name);
     let category = sel.value;
+    if (category === "__anywhere__") {
+      try {
+        const chosenDir = await window.showDirectoryPicker({ mode: "readwrite" });
+        await saveIntoDirectory(chosenDir, name, result.markdown, result.attachments);
+        status.textContent = "Saved: " + chosenDir.name + " \u203a " + name + " — Markdown and " +
+          result.attachments.length + " attachment" + (result.attachments.length === 1 ? "" : "s") + " saved together.";
+      } catch (e) {
+        if (e && e.name !== "AbortError") status.textContent = "Could not save: " + (e.message || e);
+      }
+      return;
+    }
     if (category === "__new__") {
       category = (window.prompt("Name the new category folder:") || "").trim();
       if (!category) return;
@@ -984,6 +1125,10 @@ function showResult(card, result) {
       if (!existingCategories.includes(category)) existingCategories.push(category);
       document.querySelectorAll("select.category").forEach(fillCategorySelect);
       sel.value = category;
+    }
+    if (hasFolderApi && !baseDir) {
+      await chooseFolder();
+      if (!baseDir) return;
     }
     localStorage.setItem("lastCategory", category);
     if (hasFolderApi && baseDir) {
@@ -1023,20 +1168,42 @@ function showResult(card, result) {
 
 async function handleFiles(fileList) {
   const files = [...fileList].filter(f => /\.(eml|msg|pdf)$/i.test(f.name));
-  for (const file of files) {
-    const card = addCard(file);
-    card.dataset.origName = file.name;
-    const status = card.querySelector(".status");
+  if (!files.length) return;
+  const progressCard = addCard({ name: files.length === 1 ? files[0].name : files.length + " selected files" });
+  const progressStatus = progressCard.querySelector(".status");
+  const converted = [];
+  for (let index = 0; index < files.length; index++) {
+    const file = files[index];
     try {
       const convert = /\.eml$/i.test(file.name) ? convertEml :
         /\.msg$/i.test(file.name) ? convertMsg : convertPdf;
-      const result = await convert(file, msg => { status.textContent = msg; });
-      showResult(card, result);
+      const result = await convert(file, msg => {
+        progressStatus.textContent = "File " + (index + 1) + " of " + files.length + ": " + msg;
+      });
+      converted.push(result);
     } catch (e) {
+      const card = addCard(file);
       card.classList.add("error");
+      const status = card.querySelector(".status");
       status.textContent = "Could not convert this file: " + (e && e.message ? e.message : e);
       status.classList.remove("busy");
     }
+  }
+  progressCard.remove();
+
+  const groups = new Map();
+  for (const result of converted) {
+    const key = result.threadKey && result.sourceFormat !== "PDF" ? result.threadKey : Symbol();
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(result);
+  }
+  for (const group of groups.values()) {
+    const result = group.length > 1 ? mergeThreadResults(group) : group[0];
+    const sourceLabel = result.sourceNames.length === 1
+      ? result.sourceNames[0] : result.sourceNames.length + " messages in one thread";
+    const card = addCard({ name: sourceLabel });
+    card.dataset.origName = sourceLabel;
+    showResult(card, result);
   }
 }
 

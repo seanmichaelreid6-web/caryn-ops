@@ -15,17 +15,31 @@ Each saved folder contains:
 The tool runs entirely in Chrome or Edge. Your work email and attachments never
 leave your computer.
 
-## The new workflow
+## The workflow
 
 You no longer need to print the email, print each attachment, or match files on
 your Desktop.
 
 1. Save the complete message from Outlook as an `.eml` or `.msg` file.
-2. Drop that one file into this tool.
-3. Pick a category and click **Save to folder**.
+2. Drop the file into this tool.
+3. Pick a category or choose any other folder, then click **Save to folder**.
 
 The tool creates the Markdown email and extracts its attachments into the same
 folder in one step.
+
+### Threads whose replies have different attachments
+
+An Outlook `.msg` or `.eml` file contains only the attachments on that saved
+message. The quoted earlier replies may be visible in its body, but their old
+attachment files are not stored inside the newest message. No converter can
+recover attachment bytes that are absent from the file.
+
+For a thread whose attachments are spread across several replies, save each
+message that has attachments. Select all those `.msg` or `.eml` files together
+and drop them onto the tool in one action. Files with the same subject are
+combined into one chronological Markdown thread and one folder containing all
+attachments. You no longer need to feed the saved messages to the tool one by
+one.
 
 ## Save a complete message from Outlook
 
@@ -61,18 +75,17 @@ Microsoft's current instructions are here:
 
 1. Drop one or more `.eml` or `.msg` files into the large drop area.
 2. Review the proposed name. The default format is
-   **`Subject From Sender Month Day`**.
-3. Pick a category. The existing category list is still included, and you can
-   create another category when needed.
+   **`Date_From Sender_To Recipients_Subject_number of attachments`**.
+3. Pick a preset category, choose **+ New category folder…**, or choose
+   **Choose any other folder…** to save somewhere else on your computer.
 4. Click **Save to folder**.
 
 The result looks like this:
 
 ```text
-[email home folder]/
-  Everest Emails/
-    Rates and Cost From Mary Kate Ellis September 1/
-      Rates and Cost From Mary Kate Ellis September 1.md
+[chosen save folder]/
+  September 1_From Mary Kate Ellis_To Tim_Rates and Cost_2 attachments/
+      September 1_From Mary Kate Ellis_To Tim_Rates and Cost_2 attachments.md
       updated-rates.xlsx
       plan-summary.pdf
 ```

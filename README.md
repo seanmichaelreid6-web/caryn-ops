@@ -1,10 +1,10 @@
 # caryn-ops
 
-Home of the **Email PDF → Markdown converter** — a drag-and-drop tool that
-files emails saved as PDFs into organized category folders. Each email gets its
-own folder named `Subject From Sender Month Day` with the Markdown conversion
-inside, ready for its attachments to be added alongside. Reads both normal and
-image-only PDFs (built-in OCR).
+Home of the **Outlook Email → Markdown Archive** — a drag-and-drop tool that
+files `.msg`, `.eml`, and PDF emails into organized folders. It extracts regular
+attachments from Outlook files automatically. When every saved message from the
+same thread is dropped together, it combines the messages and all their
+attachments into one archive folder.
 
 - **The tool:** [`tools/email-pdf-to-markdown.html`](tools/email-pdf-to-markdown.html) —
   a single file that runs entirely in your web browser. Download it, double-click
