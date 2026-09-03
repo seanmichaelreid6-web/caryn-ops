@@ -1,116 +1,98 @@
-# Email PDF → Markdown converter
+# Email → Context Library
 
-`email-pdf-to-markdown.html` is a single-file tool that turns emails you've
-saved as PDFs into organized folders: a Markdown copy of the email plus its
-attachments, pulled automatically from your Attachments folder. It runs
-entirely in your web browser — no installation, no internet connection needed,
-and your emails never leave your computer.
+`email-to-context.html` turns emails saved out of Outlook into an organized library
+of Markdown files and original attachments — ready to feed to an AI assistant as
+context. It runs entirely in your browser: no install, no internet, nothing uploaded.
 
-It reads both kinds of email PDFs:
+**The key idea:** an email saved from Outlook as a `.eml` (or `.msg`) file already
+contains the message *and* every attachment inside it. So there is no printing, no
+scanning, and nothing to match up by filename — the tool opens the email and pulls
+everything out.
 
-- **Normal PDFs** (made with "Save as PDF") — converted instantly.
-- **Image-only PDFs** (made with "Microsoft Print to PDF", which saves the
-  email as a picture) — read with the built-in OCR engine. This takes a few
-  seconds per page.
+## Step 1 — get the emails out of Outlook
 
-## How to get it
+**One email at a time:** right-click it in the message list → **Save as** →
+**Save as EML**. (In Outlook on the web the command is **Download** → **Download as
+EML**.) You can also drag a message straight from Outlook into a folder.
 
-1. Open `tools/email-pdf-to-markdown.html` in this repository on GitHub.
-2. Click the **Download raw file** button (the down-arrow icon near the top right).
-3. Save it anywhere on your computer — your Desktop is fine.
+**Many at once** — the fast way for a backlog:
+1. Select the emails you want (Ctrl-click, or Ctrl+A for a whole folder).
+2. **Forward** → **Forward as attachment**. Each email becomes an attachment.
+3. Send it to yourself.
+4. Open that email and click **Download all** — you get one `.zip` containing all
+   of them, each still carrying its own attachments.
 
-## One-time setup
+If you still have **classic Outlook**, selecting many messages and dragging them
+into a folder saves each as a `.msg` file — the fastest option of all. The tool
+reads those too.
 
-1. Double-click the saved `email-pdf-to-markdown.html` file. It opens in your
-   web browser (Chrome or Edge recommended).
-2. Click **Choose folder** and pick your **email home folder** — the folder
-   that holds (or will hold) your category folders, for example a folder on
-   your Desktop. The browser asks you to allow access; click **Allow**.
-3. Click **Choose Attachments folder** and pick the folder where you save
-   email attachments (your Desktop "Attachments" folder). If that folder
-   lives inside your email home folder, the tool finds it by itself.
+## Step 2 — one-time setup
 
-The tool remembers both folders. If the browser asks you to reconnect after a
-restart, that's a one-click security check.
+1. Download `email-to-context.html` from this repository (open the file, click the
+   **Download raw file** down-arrow) and save it anywhere — your Desktop is fine.
+2. Double-click it. It opens in your browser (**Chrome or Edge** recommended).
+3. Click **Choose folder** and pick your library folder — the folder that holds
+   your category folders. Click **Allow** when the browser asks. It's remembered.
 
-## Converting an email
+## Step 3 — file your emails
 
-1. Drag the email PDF onto the drop area (or click it to pick the file).
-   You can drop several at once.
-2. The tool reads the email and suggests a name in the form
-   **`Subject From Sender Month Day`** — for example
-   `Rates and Cost for the Fixed Indemnity LM on Ind Product From MaryKate Ellis May 15`.
-   Edit the name if you want (for example, shortening the sender to a first name).
-3. If the email lists attachments, the tool looks for each one in your
-   Attachments folder and shows what it found:
-   - ✓ found — it will be filed with the email
-   - ✓ found under a slightly different name (spacing, capitalization, a
-     `(1)` duplicate suffix, or a small OCR slip) — the real file is used
-   - ? not found, but a similar file exists — click **Use that file** if it's
-     the right one
-   - ✗ not found — you'll add it yourself later
-4. Pick the category — your categories (Everest Emails, Optimed Agency Emails,
-   Paysign emails, Billing Emails, IQ emails, FTC Emails, Sent emails) are
-   built in, any folders already inside your home folder are offered too, and
-   **+ New category folder…** creates a new one.
-5. Click **Save to folder**. The tool creates:
+Pick the category, then drop `.eml`, `.msg`, or `.zip` files on the page — as many
+at once as you like. For each email you get:
 
-   ```
-   [your home folder]/
-     Everest Emails/
-       Rates and Cost ... From MaryKate Ellis May 15/          ← the email's folder
-         Rates and Cost ... From MaryKate Ellis May 15.md      ← the Markdown file
-         Individual Product Fixed Indemnity Commission breakdown.xlsx
-         Standard and Thrive UHF LM Pairing.xlsx               ← attachments, filed for you
-   ```
+```
+Everest Emails/
+  Rates and Cost for the Fixed Indemnity LM on Ind Product From MaryKate Ellis May 15/
+    email.md                        the email as Markdown, with real headers
+    original.eml                    the untouched original — nothing is ever lost
+    attachments/
+      Individual Product ... breakdown.xlsx     original file, byte for byte
+      Group Product Cost Grid.pdf
+    attachments-as-text/
+      Individual Product ... breakdown.md       the spreadsheet as a Markdown table
+      Group Product Cost Grid.md                the PDF's text
+```
 
-   The status line tells you how many attachments were filed and names any
-   that are still missing.
+`email.md` starts with a machine-readable header block (subject, from, to, cc,
+date, message id, attachment list) followed by the message body converted to
+Markdown — including quoted earlier messages in the thread.
 
-By default attachments are **copied**, so the originals stay in your
-Attachments folder. Tick **Remove attachments from the Attachments folder
-after filing them** at the top if you'd rather they be moved, which keeps the
-Attachments folder from piling up.
+`attachments-as-text/` holds readable versions of spreadsheets (`.xlsx`, `.csv`),
+Word documents (`.docx`), PDFs and text files, so an AI can read their contents
+directly. The originals are always kept alongside.
 
-## What the Markdown contains
-
-The subject as a title, then each message in the thread with its
-**From / Sent / To / Cc** lines, the attachment checklist, and the message
-text. In the checklist, attachments that were filed are ticked (`[x]`) and
-any that couldn't be found are marked "not found in the Attachments folder",
-so the file itself records what's complete. Characters not allowed in file
-names (`: / \ ? * " < > |`) are removed automatically, and a `[Draft]` tag on
-the subject is stripped.
+At the top of your library folder, **`email-index.csv`** grows with one row per
+email — date, sender, recipients, subject, category, folder and message id. It is
+the table of contents for the whole library, and it's how the tool knows not to
+file the same email twice.
 
 ## Good to know
 
-- The **date** in the name is the date of the latest message in the thread.
-  Ambiguous numeric dates like `3/4/2026` are read the US way (March 4).
-- **Firefox and Safari** can't create folders or read your Attachments folder
-  from a web page. There the Save button becomes **Download folder (.zip)** —
-  unzip it inside your category folder and add the attachments by hand.
-- **Tip:** when saving emails from Outlook, choosing **Save as PDF** as the
-  print destination (instead of **Microsoft Print to PDF**) produces PDFs
-  with real text — they convert instantly and with perfect accuracy, and
-  they're searchable too. Image-only PDFs still work via OCR, but OCR can
-  occasionally misread a character.
-- If the tool can't find a subject, sender, or date, it falls back to the
-  PDF's own title and stored date and tells you what it did — and you can
-  always edit the name before saving.
+- **Duplicates are skipped.** Emails are identified by their Message-ID, so
+  re-dropping the same email (or the same zip) won't create a second copy.
+- **Automatic sorting** (optional checkbox): routes each email to a category whose
+  name appears in the sender, recipients or subject. Leave it off to send
+  everything to the category you picked.
+- **Cloud attachments.** If a sender used a OneDrive/SharePoint link instead of
+  attaching the file, the file is not inside the email. The tool lists those links
+  in `email.md` under "Cloud links in this email" so you can grab them by hand.
+- **Encrypted / "Do not forward" emails** can't be saved as .eml or .msg at all —
+  that's a Microsoft restriction, not a tool limitation. Handle those separately.
+- **Firefox and Safari** can't write folders from a web page. There, everything you
+  drop is packaged into one `email-context.zip` with the same folder layout — unzip
+  it into your library folder.
+- **A tip that improves quality:** `.eml` from Outlook keeps the message text as
+  real text, so conversion is exact. Scanned PDF attachments have no text inside
+  them; the tool saves the original and tells you it couldn't read any text.
 
-## Rebuilding the tool (for developers)
+## The older PDF tool
 
-The tool is generated from `src/app.html` (page, parsing, and UI logic) with
-[pdf.js](https://mozilla.github.io/pdf.js/) (PDF reading) and
-[tesseract.js](https://tesseract.projectnaptha.com/) (OCR) inlined so the
-single file works offline:
+`email-pdf-to-markdown.html` is the earlier tool that converts emails you already
+printed to PDF, using OCR, and pulls matching attachments from a folder. Keep using
+it for the backlog of PDFs you've already saved. For anything new, the .eml route
+above is faster and lossless. See `README-pdf-tool.md`.
 
-```bash
-cd tools/src
-npm install pdfjs-dist@3.11.174 tesseract.js@5 --no-save
-curl -sSL -o eng.traineddata https://raw.githubusercontent.com/tesseract-ocr/tessdata_fast/4.1.0/eng.traineddata
-gzip -9 eng.traineddata
-node build.mjs
-```
+## Rebuilding (for developers)
 
-This rewrites `tools/email-pdf-to-markdown.html`.
+`src/context-app.html` is the source; `src/build-context.mjs` inlines the library
+bundle and pdf.js into the single distributable file. The header of
+`build-context.mjs` lists the exact npm install and esbuild commands.

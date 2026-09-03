@@ -1,15 +1,19 @@
 # caryn-ops
 
-Home of the **Email PDF → Markdown converter** — a drag-and-drop tool that
-files emails saved as PDFs into organized category folders. Each email gets its
-own folder named `Subject From Sender Month Day` holding the Markdown
-conversion and the email's attachments, pulled automatically from your
-Attachments folder. Reads both normal and image-only PDFs (built-in OCR).
+Tools for turning a job's Outlook email into an organized, AI-readable context library.
 
-- **The tool:** [`tools/email-pdf-to-markdown.html`](tools/email-pdf-to-markdown.html) —
-  a single file that runs entirely in your web browser. Download it, double-click
-  it, and drop your email PDFs on it. Nothing is uploaded anywhere.
-- **Instructions:** [`tools/README.md`](tools/README.md) — how to download it,
-  how to use it, and what to expect.
-- **Source code:** [`tools/src/`](tools/src/) — for developers who want to
-  modify or rebuild the tool.
+## [Email → Context Library](tools/README.md) — the main tool
+
+`tools/email-to-context.html` — drop emails saved from Outlook (`.eml`, `.msg`, or a
+`.zip` of them) and each becomes its own folder holding a Markdown copy of the email,
+the untouched original, and every attachment in its original form, extracted from
+inside the email. Also keeps a running `email-index.csv` of everything filed, and
+skips duplicates. Runs entirely in the browser; nothing is uploaded.
+
+**[Full instructions →](tools/README.md)**
+
+## [Email PDF → Markdown](tools/README-pdf-tool.md) — the older tool
+
+`tools/email-pdf-to-markdown.html` — converts emails that were printed to PDF, using
+built-in OCR, and pulls matching attachments from an Attachments folder. Useful for a
+backlog of already-printed PDFs; for new emails prefer the tool above.

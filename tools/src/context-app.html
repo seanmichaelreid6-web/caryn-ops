@@ -1,0 +1,805 @@
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Email → Context Library</title>
+<style>
+  :root {
+    --bg: #f6f7f9; --card: #ffffff; --text: #1a2233; --muted: #5b6472;
+    --accent: #2563eb; --accent-soft: #dbeafe; --border: #d8dde5;
+    --ok: #15803d; --err: #b91c1c; --warnbg: #fef3c7; --warntext: #92400e;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #12161d; --card: #1b212b; --text: #e7ebf1; --muted: #9aa4b2;
+      --accent: #60a5fa; --accent-soft: #1e3a5f; --border: #313a47;
+      --ok: #4ade80; --err: #f87171; --warnbg: #3a2f14; --warntext: #fbbf24;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 2rem 1rem 4rem; background: var(--bg); color: var(--text);
+    font: 16px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  }
+  main { max-width: 880px; margin: 0 auto; }
+  h1 { font-size: 1.6rem; margin: 0 0 .25rem; }
+  .sub { color: var(--muted); margin: 0 0 1.2rem; }
+  .bar {
+    display: flex; align-items: center; gap: .8rem; flex-wrap: wrap;
+    background: var(--card); border: 1px solid var(--border); border-radius: 12px;
+    padding: .9rem 1.1rem; margin-bottom: 1rem;
+  }
+  .bar .label { font-weight: 600; }
+  .bar .name { color: var(--ok); font-weight: 600; }
+  .bar .hint { color: var(--muted); font-size: .9rem; flex-basis: 100%; margin: 0; }
+  #drop {
+    display: block; border: 2px dashed var(--border); border-radius: 14px;
+    background: var(--card); padding: 2.4rem 1.5rem; text-align: center; cursor: pointer;
+    transition: border-color .15s, background .15s;
+  }
+  #drop.over { border-color: var(--accent); background: var(--accent-soft); }
+  #drop .big { font-size: 1.15rem; font-weight: 600; }
+  #drop .hint { color: var(--muted); margin-top: .35rem; font-size: .95rem; }
+  #drop input { display: none; }
+  #summary {
+    margin-top: 1.2rem; display: none; background: var(--card);
+    border: 1px solid var(--border); border-radius: 12px; padding: .9rem 1.1rem;
+  }
+  #summary b { font-size: 1.05rem; }
+  #results { margin-top: 1rem; display: flex; flex-direction: column; gap: .7rem; }
+  .card {
+    background: var(--card); border: 1px solid var(--border); border-radius: 12px;
+    padding: .85rem 1.1rem;
+  }
+  .card.error { border-color: var(--err); }
+  .card .title { font-weight: 600; overflow-wrap: anywhere; }
+  .card .meta { color: var(--muted); font-size: .88rem; overflow-wrap: anywhere; margin-top: .15rem; }
+  .card .status { font-size: .9rem; color: var(--ok); margin-top: .4rem; overflow-wrap: anywhere; }
+  .card.error .status { color: var(--err); }
+  .card .status.busy { color: var(--muted); }
+  .files { margin: .45rem 0 0; padding: 0; list-style: none; font-size: .87rem; }
+  .files li { padding: .1rem 0; color: var(--muted); overflow-wrap: anywhere; }
+  .files .kept { color: var(--ok); }
+  .warn {
+    color: var(--warntext); background: var(--warnbg); font-size: .85rem;
+    margin-top: .4rem; padding: .35rem .6rem; border-radius: 6px; overflow-wrap: anywhere;
+  }
+  select, button {
+    font: inherit; font-size: .92rem; padding: .45rem .8rem; border-radius: 8px;
+    border: 1px solid var(--border); background: var(--card); color: var(--text); cursor: pointer;
+  }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  button:hover { filter: brightness(1.06); }
+  button:disabled { opacity: .5; cursor: not-allowed; }
+  details { margin-top: .5rem; }
+  details summary { cursor: pointer; color: var(--muted); font-size: .88rem; }
+  pre {
+    background: var(--bg); border: 1px solid var(--border); border-radius: 8px;
+    padding: .8rem; overflow-x: auto; font-size: .8rem; white-space: pre-wrap;
+    overflow-wrap: anywhere; max-height: 26rem; overflow-y: auto;
+  }
+  footer { margin-top: 2.5rem; color: var(--muted); font-size: .85rem; }
+  footer b { color: var(--text); }
+  ol.how { margin: .4rem 0 0; padding-left: 1.2rem; }
+  ol.how li { margin: .2rem 0; }
+</style>
+
+<main>
+  <h1>Email &rarr; Context Library</h1>
+  <p class="sub">Drop email files straight from Outlook (<b>.eml</b>, <b>.msg</b>, or a <b>.zip</b> of them).
+  Each one becomes its own folder holding a Markdown copy of the email, the original file, and every
+  attachment in its original form — extracted from inside the email, so nothing has to be matched up
+  by hand. Nothing is uploaded anywhere.</p>
+
+  <div class="bar">
+    <span class="label">Library folder:</span>
+    <span class="name" id="folderName">not chosen yet</span>
+    <button id="chooseFolder" class="primary">Choose folder</button>
+    <button id="reconnectFolder" style="display:none">Reconnect</button>
+    <p class="hint" id="folderHint">Pick the folder that holds your category folders — for example a
+    folder on your Desktop. You only do this once.</p>
+  </div>
+
+  <div class="bar">
+    <span class="label">File emails into:</span>
+    <select id="category"></select>
+    <button id="newCategory">+ New category</button>
+    <label class="hint"><input type="checkbox" id="autoRoute"> Sort automatically by sender's company
+    when it matches a category name (otherwise everything goes to the category above)</label>
+  </div>
+
+  <label id="drop">
+    <div class="big">Drop email files here</div>
+    <div class="hint">.eml &middot; .msg &middot; .zip &mdash; drop as many as you like at once</div>
+    <input type="file" id="fileInput" accept=".eml,.msg,.zip,message/rfc822,application/vnd.ms-outlook,application/zip" multiple>
+  </label>
+
+  <div id="summary"></div>
+  <div id="results"></div>
+
+  <footer>
+    <b>How to get the files out of Outlook</b>
+    <ol class="how">
+      <li><b>One email:</b> right-click it in the message list &rarr; <b>Save as</b> &rarr; <b>Save as EML</b>
+      (in Outlook on the web it's <b>Download</b> &rarr; <b>Download as EML</b>). You can also drag the
+      message straight into a folder.</li>
+      <li><b>Many at once:</b> select them all &rarr; <b>Forward</b> &rarr; <b>Forward as attachment</b> &rarr;
+      send it to yourself. Open that email and click <b>Download all</b> — you get one .zip of emails.
+      Drop the whole .zip here.</li>
+    </ol>
+    The saved .eml/.msg already contains every attachment, so there is no printing, no scanning and
+    nothing to match by filename. Emails protected with encryption or "Do not forward" can't be saved
+    this way — those still need to be handled by hand.
+  </footer>
+</main>
+
+<script id="ctxlibs">
+/*__CTXLIBS__*/
+</script>
+<script id="pdfjs-lib">
+/*__PDFJS__*/
+</script>
+<script id="pdfjs-worker" type="text/js-worker">
+/*__PDFJS_WORKER__*/
+</script>
+
+<script>
+"use strict";
+
+const {
+  PostalMime, MsgReader, TurndownService, decompressRTF, deEncapsulateSync,
+  iconv, XLSX, mammoth, unzipSync, zipSync,
+} = CtxLibs;
+
+pdfjsLib.GlobalWorkerOptions.workerSrc = URL.createObjectURL(
+  new Blob([document.getElementById("pdfjs-worker").textContent], { type: "text/javascript" })
+);
+
+/* ================= helpers ================= */
+const MONTH_FULL = ["January", "February", "March", "April", "May", "June",
+  "July", "August", "September", "October", "November", "December"];
+
+function sanitizeName(s, max) {
+  const cleaned = String(s || "")
+    .replace(/[\\/:*?"<>|]/g, " ")
+    .replace(/[\u0000-\u001f\u007f]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/[. ]+$/, "");
+  return (cleaned || "untitled").slice(0, max || 110).trim().replace(/[. ]+$/, "") || "untitled";
+}
+function pad(n) { return String(n).padStart(2, "0"); }
+function isoDate(d) { return d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate()); }
+function isoStamp(d) { return isoDate(d) + " " + pad(d.getHours()) + ":" + pad(d.getMinutes()); }
+function bytesOf(x) {
+  if (x instanceof Uint8Array) return x;
+  if (x instanceof ArrayBuffer) return new Uint8Array(x);
+  if (ArrayBuffer.isView(x)) return new Uint8Array(x.buffer, x.byteOffset, x.byteLength);
+  return new TextEncoder().encode(String(x));
+}
+function yamlValue(s) {
+  return '"' + String(s == null ? "" : s).replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/\n/g, " ") + '"';
+}
+function csvCell(s) { return '"' + String(s == null ? "" : s).replace(/"/g, '""') + '"'; }
+
+/* ================= parsing: .eml / .msg -> one common shape ================= */
+const turndown = new TurndownService({ headingStyle: "atx", codeBlockStyle: "fenced", bulletListMarker: "-" });
+turndown.remove(["style", "script", "head", "meta", "link"]);
+
+function htmlToMarkdown(html) {
+  try {
+    return turndown.turndown(html).replace(/\n{3,}/g, "\n\n").trim();
+  } catch (e) {
+    const div = document.createElement("div");
+    div.innerHTML = html;
+    return (div.textContent || "").trim();
+  }
+}
+
+function looksLikeMsg(bytes) {
+  return bytes.length > 8 && bytes[0] === 0xD0 && bytes[1] === 0xCF &&
+    bytes[2] === 0x11 && bytes[3] === 0xE0 && bytes[4] === 0xA1 && bytes[5] === 0xB1;
+}
+function looksLikeZip(bytes) {
+  return bytes.length > 4 && bytes[0] === 0x50 && bytes[1] === 0x4B &&
+    (bytes[2] === 3 || bytes[2] === 5 || bytes[2] === 7);
+}
+
+function addressList(list) {
+  if (!list || !list.length) return "";
+  return list.map(a => (a.name && a.name !== a.address ? a.name + " <" + a.address + ">" : a.address))
+    .filter(Boolean).join("; ");
+}
+
+async function parseEml(bytes) {
+  const email = await PostalMime.parse(bytes);
+  const attachments = [];
+  const inline = [];
+  for (const a of email.attachments || []) {
+    const entry = {
+      filename: a.filename || ("attachment-" + (attachments.length + 1)),
+      mimeType: a.mimeType || "application/octet-stream",
+      bytes: bytesOf(a.content),
+      contentId: (a.contentId || "").replace(/^<|>$/g, ""),
+    };
+    if (a.disposition === "inline" || a.related) inline.push(entry); else attachments.push(entry);
+  }
+  return {
+    format: "eml",
+    subject: email.subject || "",
+    from: email.from ? addressList([email.from]) : "",
+    fromName: (email.from && email.from.name) || (email.from && email.from.address) || "",
+    to: addressList(email.to),
+    cc: addressList(email.cc),
+    bcc: addressList(email.bcc),
+    date: email.date ? new Date(email.date) : null,
+    messageId: (email.messageId || "").replace(/^<|>$/g, ""),
+    inReplyTo: (email.inReplyTo || "").replace(/^<|>$/g, ""),
+    references: email.references || "",
+    markdown: email.html ? htmlToMarkdown(email.html) : (email.text || "").trim(),
+    attachments, inline,
+  };
+}
+
+function msgBodyHtml(data) {
+  if (data.bodyHtml) return data.bodyHtml;
+  if (data.html) { try { return new TextDecoder().decode(bytesOf(data.html)); } catch (e) { /* fall through */ } }
+  if (data.compressedRtf) {
+    try {
+      const rtf = decompressRTF(Array.from(bytesOf(data.compressedRtf)));
+      const out = deEncapsulateSync(CtxLibs.Buffer ? CtxLibs.Buffer.from(rtf) : new Uint8Array(rtf),
+        { decode: iconv.decode });
+      if (out && out.mode === "html") return out.text;
+      if (out && out.text) return null;
+    } catch (e) { /* fall back to plain body */ }
+  }
+  return null;
+}
+
+function parseMsg(bytes) {
+  const reader = new MsgReader(bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength));
+  const data = reader.getFileData();
+  if (data && data.error) throw new Error(data.error);
+  const recipients = data.recipients || [];
+  const pick = t => recipients.filter(r => (r.recipType || "").toLowerCase() === t)
+    .map(r => (r.name && r.name !== r.email ? r.name + " <" + r.email + ">" : (r.email || r.name)))
+    .filter(Boolean).join("; ");
+  const attachments = [];
+  const inline = [];
+  for (const a of data.attachments || []) {
+    if (a.innerMsgContent) continue; // nested messages: kept inside original.msg
+    let content;
+    try { content = reader.getAttachment(a); } catch (e) { continue; }
+    const entry = {
+      filename: a.fileName || content.fileName || "attachment",
+      mimeType: a.attachMimeTag || "application/octet-stream",
+      bytes: bytesOf(content.content),
+      contentId: (a.pidContentId || "").replace(/^<|>$/g, ""),
+    };
+    if (entry.contentId) inline.push(entry); else attachments.push(entry);
+  }
+  const html = msgBodyHtml(data);
+  const when = data.clientSubmitTime || data.messageDeliveryTime || data.creationTime;
+  return {
+    format: "msg",
+    subject: data.subject || "",
+    from: data.senderName && data.senderEmail
+      ? data.senderName + " <" + data.senderEmail + ">" : (data.senderEmail || data.senderName || ""),
+    fromName: data.senderName || data.senderEmail || "",
+    to: pick("to"), cc: pick("cc"), bcc: pick("bcc"),
+    date: when ? new Date(when) : null,
+    messageId: (data.messageId || "").replace(/^<|>$/g, ""),
+    inReplyTo: "", references: "",
+    markdown: html ? htmlToMarkdown(html) : (data.body || "").trim(),
+    attachments, inline,
+  };
+}
+
+/* ================= attachment text extraction (originals are always kept) ================= */
+async function attachmentToText(att) {
+  const name = att.filename.toLowerCase();
+  try {
+    if (/\.(xlsx|xlsm|xlsb|xls|csv)$/.test(name)) {
+      const wb = XLSX.read(att.bytes, { type: "array" });
+      let out = "";
+      for (const sheet of wb.SheetNames) {
+        const md = XLSX.utils.sheet_to_csv(wb.Sheets[sheet], { blankrows: false });
+        if (!md.trim()) continue;
+        out += "## " + sheet + "\n\n";
+        const rows = md.trim().split("\n").map(r => r.split(","));
+        const width = Math.max(...rows.map(r => r.length));
+        const cell = (r, i) => (r[i] === undefined ? "" : r[i]).replace(/\|/g, "\\|");
+        out += "| " + Array.from({ length: width }, (_, i) => cell(rows[0], i)).join(" | ") + " |\n";
+        out += "|" + " --- |".repeat(width) + "\n";
+        for (const r of rows.slice(1)) {
+          out += "| " + Array.from({ length: width }, (_, i) => cell(r, i)).join(" | ") + " |\n";
+        }
+        out += "\n";
+      }
+      return out.trim();
+    }
+    if (/\.docx$/.test(name)) {
+      const res = await mammoth.convertToHtml({ arrayBuffer: att.bytes.buffer.slice(
+        att.bytes.byteOffset, att.bytes.byteOffset + att.bytes.byteLength) });
+      return htmlToMarkdown(res.value || "");
+    }
+    if (/\.pdf$/.test(name)) {
+      const pdf = await pdfjsLib.getDocument({ data: att.bytes.slice(), isEvalSupported: false }).promise;
+      let out = "";
+      for (let p = 1; p <= pdf.numPages; p++) {
+        const content = await (await pdf.getPage(p)).getTextContent();
+        const text = content.items.map(i => i.str).join(" ").replace(/\s+/g, " ").trim();
+        if (text) out += (pdf.numPages > 1 ? "## Page " + p + "\n\n" : "") + text + "\n\n";
+      }
+      return out.trim();
+    }
+    if (/\.(txt|md|log|json|xml|html?)$/.test(name)) {
+      const text = new TextDecoder().decode(att.bytes).trim();
+      return /\.html?$/.test(name) ? htmlToMarkdown(text) : text;
+    }
+  } catch (e) { /* unreadable attachment: the original file is still saved */ }
+  return null;
+}
+
+/* ================= markdown document ================= */
+const CLOUD_LINK = /https?:\/\/[^\s)"']*(sharepoint\.com|-my\.sharepoint|onedrive\.live\.com|1drv\.ms)[^\s)"']*/gi;
+
+function buildMarkdown(email, folderName, attachmentInfo) {
+  const cloud = [...new Set((email.markdown.match(CLOUD_LINK) || []))];
+  let md = "---\n";
+  md += "subject: " + yamlValue(email.subject) + "\n";
+  md += "from: " + yamlValue(email.from) + "\n";
+  md += "to: " + yamlValue(email.to) + "\n";
+  if (email.cc) md += "cc: " + yamlValue(email.cc) + "\n";
+  if (email.bcc) md += "bcc: " + yamlValue(email.bcc) + "\n";
+  md += "date: " + yamlValue(email.date ? email.date.toISOString() : "") + "\n";
+  md += "date_local: " + yamlValue(email.date ? isoStamp(email.date) : "") + "\n";
+  if (email.messageId) md += "message_id: " + yamlValue(email.messageId) + "\n";
+  if (email.inReplyTo) md += "in_reply_to: " + yamlValue(email.inReplyTo) + "\n";
+  md += "source_file: " + yamlValue("original." + email.format) + "\n";
+  md += "attachments:\n";
+  if (attachmentInfo.length) {
+    for (const a of attachmentInfo) md += "  - " + yamlValue(a.filename) + "\n";
+  } else {
+    md += "  []\n";
+  }
+  md += "---\n\n";
+
+  md += "# " + (email.subject || "(no subject)") + "\n\n";
+  md += "**From:** " + email.from + "  \n";
+  md += "**To:** " + email.to + "  \n";
+  if (email.cc) md += "**Cc:** " + email.cc + "  \n";
+  md += "**Date:** " + (email.date ? isoStamp(email.date) : "unknown") + "  \n";
+
+  if (attachmentInfo.length) {
+    md += "\n**Attachments** (saved in this folder):\n\n";
+    for (const a of attachmentInfo) {
+      md += "- `attachments/" + a.filename + "`" +
+        (a.textFile ? " — text version: `attachments-as-text/" + a.textFile + "`" : "") + "\n";
+    }
+  }
+  if (cloud.length) {
+    md += "\n**Cloud links in this email** (the files live in OneDrive/SharePoint, not in the email — " +
+      "download them by hand if you need them):\n\n";
+    for (const u of cloud) md += "- " + u + "\n";
+  }
+  md += "\n---\n\n" + (email.markdown || "*(no message body)*") + "\n";
+  return md;
+}
+
+/* ================= folder naming ================= */
+function folderNameFor(email) {
+  const subject = sanitizeName((email.subject || "No subject").replace(/^\s*(re|fw|fwd)\s*:\s*/i, "").trim(), 80);
+  const rawSender = (email.fromName || "").split("<")[0].trim();
+  const sender = rawSender ? sanitizeName(rawSender, 40).replace(/^untitled$/, "") : "";
+  const d = email.date || new Date(0);
+  const when = MONTH_FULL[d.getMonth()] + " " + d.getDate();
+  return sanitizeName(subject + (sender ? " From " + sender : "") + " " + when, 120);
+}
+
+/* ================= folder + index storage ================= */
+const PRESET_CATEGORIES = [
+  "Everest Emails", "Optimed Agency Emails", "Paysign emails", "Billing Emails",
+  "IQ emails", "FTC Emails", "Sent emails",
+];
+const hasFolderApi = typeof window.showDirectoryPicker === "function";
+let baseDir = null;
+let categories = [];
+let indexRows = null; // loaded lazily: Map messageId -> true
+
+const idb = {
+  open: () => new Promise((res, rej) => {
+    const rq = indexedDB.open("email-context-tool", 1);
+    rq.onupgradeneeded = () => rq.result.createObjectStore("kv");
+    rq.onsuccess = () => res(rq.result);
+    rq.onerror = () => rej(rq.error);
+  }),
+  async set(key, val) {
+    try {
+      const db = await this.open();
+      await new Promise((res, rej) => {
+        const tx = db.transaction("kv", "readwrite");
+        tx.objectStore("kv").put(val, key);
+        tx.oncomplete = res; tx.onerror = () => rej(tx.error);
+      });
+    } catch (e) { /* persistence is best-effort */ }
+  },
+  async get(key) {
+    try {
+      const db = await this.open();
+      return await new Promise((res, rej) => {
+        const rq = db.transaction("kv").objectStore("kv").get(key);
+        rq.onsuccess = () => res(rq.result);
+        rq.onerror = () => rej(rq.error);
+      });
+    } catch (e) { return undefined; }
+  },
+};
+
+const INDEX_FILE = "email-index.csv";
+const INDEX_HEADER = "date,from,to,subject,category,folder,attachments,message_id\n";
+
+async function loadIndex() {
+  indexRows = new Map();
+  if (!baseDir) return;
+  try {
+    const fh = await baseDir.getFileHandle(INDEX_FILE);
+    const text = await (await fh.getFile()).text();
+    for (const line of text.split("\n").slice(1)) {
+      const m = line.match(/"([^"]*)"\s*$/);
+      if (m && m[1]) indexRows.set(m[1], true);
+    }
+  } catch (e) { /* no index yet */ }
+}
+
+async function appendIndex(row) {
+  if (!baseDir) return;
+  const fh = await baseDir.getFileHandle(INDEX_FILE, { create: true });
+  let existing = "";
+  try { existing = await (await fh.getFile()).text(); } catch (e) { /* new file */ }
+  const w = await fh.createWritable();
+  await w.write((existing || INDEX_HEADER) + row);
+  await w.close();
+}
+
+async function refreshCategories() {
+  categories = [];
+  if (baseDir) {
+    try {
+      for await (const [name, h] of baseDir.entries()) {
+        if (h.kind === "directory") categories.push(name);
+      }
+    } catch (e) { /* listing is best-effort */ }
+  }
+  const seen = new Set(categories.map(c => c.toLowerCase()));
+  for (const c of PRESET_CATEGORIES) if (!seen.has(c.toLowerCase())) categories.push(c);
+  const sel = document.getElementById("category");
+  const prev = sel.value || localStorage.getItem("lastCategory") || "";
+  sel.innerHTML = "";
+  for (const c of categories) {
+    const o = document.createElement("option");
+    o.value = c; o.textContent = c;
+    sel.appendChild(o);
+  }
+  if (prev && categories.includes(prev)) sel.value = prev;
+}
+
+async function setBaseDir(handle) {
+  baseDir = handle;
+  document.getElementById("folderName").textContent = handle.name;
+  document.getElementById("folderHint").textContent =
+    "Each email is saved as: " + handle.name + " › category › email folder. " +
+    "A running list of everything lives in " + handle.name + " › " + INDEX_FILE + ".";
+  document.getElementById("chooseFolder").textContent = "Change folder";
+  document.getElementById("reconnectFolder").style.display = "none";
+  await refreshCategories();
+  await loadIndex();
+  idb.set("baseDir", handle);
+}
+
+async function restoreFolder() {
+  const handle = await idb.get("baseDir");
+  if (!handle || typeof handle.queryPermission !== "function") return;
+  try {
+    if (await handle.queryPermission({ mode: "readwrite" }) === "granted") { await setBaseDir(handle); return; }
+    document.getElementById("folderName").textContent = handle.name + " (one click to reconnect)";
+    const btn = document.getElementById("reconnectFolder");
+    btn.style.display = "inline-block";
+    btn.onclick = async () => {
+      try {
+        if (await handle.requestPermission({ mode: "readwrite" }) === "granted") await setBaseDir(handle);
+      } catch (e) { /* fall back to Choose folder */ }
+    };
+  } catch (e) { /* stored handle unusable */ }
+}
+
+async function writeFile(dir, name, data) {
+  const fh = await dir.getFileHandle(name, { create: true });
+  const w = await fh.createWritable();
+  await w.write(data instanceof Uint8Array ? new Blob([data]) : data);
+  await w.close();
+}
+
+// Never overwrite a different email that happens to share a folder name.
+async function uniqueDir(parent, name) {
+  for (let i = 0; i < 50; i++) {
+    const candidate = i === 0 ? name : name + " (" + (i + 1) + ")";
+    let exists = false;
+    try { await parent.getDirectoryHandle(candidate); exists = true; } catch (e) { exists = false; }
+    if (!exists) return { dir: await parent.getDirectoryHandle(candidate, { create: true }), name: candidate };
+  }
+  return { dir: await parent.getDirectoryHandle(name, { create: true }), name };
+}
+
+/* ================= zip fallback (no folder access) ================= */
+function downloadBlob(filename, blob) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url; a.download = filename;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 15000);
+}
+
+/* ================= the pipeline ================= */
+async function expandInputs(files) {
+  const out = [];
+  for (const file of files) {
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    if (looksLikeZip(bytes) || /\.zip$/i.test(file.name)) {
+      let entries;
+      try { entries = unzipSync(bytes); } catch (e) { out.push({ name: file.name, bytes, error: "This .zip could not be opened." }); continue; }
+      for (const [path, data] of Object.entries(entries)) {
+        if (!data || !data.length) continue;
+        const base = path.split("/").pop();
+        if (!base || base.startsWith(".")) continue;
+        if (/\.(eml|msg)$/i.test(base) || looksLikeMsg(data) || data[0] === 0x52 /* 'R' of Received */) {
+          out.push({ name: base, bytes: data, from: file.name });
+        }
+      }
+    } else {
+      out.push({ name: file.name, bytes });
+    }
+  }
+  return out;
+}
+
+async function processOne(item, category) {
+  const email = looksLikeMsg(item.bytes) ? parseMsg(item.bytes) : await parseEml(item.bytes);
+  if (!email.date) email.date = new Date();
+
+  const warnings = [];
+  const attachmentInfo = [];
+  for (const att of [...email.attachments]) {
+    const text = await attachmentToText(att);
+    const info = { filename: sanitizeName(att.filename, 90), bytes: att.bytes, size: att.bytes.length };
+    if (text) {
+      info.textFile = info.filename.replace(/\.[^.]+$/, "") + ".md";
+      info.text = text;
+    } else if (/\.(pdf|docx|xlsx|xls|csv)$/i.test(att.filename)) {
+      warnings.push("No text could be read from “" + att.filename + "” (it may be a scan or an image) — " +
+        "the original file is saved either way.");
+    }
+    attachmentInfo.push(info);
+  }
+
+  const folder = folderNameFor(email);
+  const markdown = buildMarkdown(email, folder, attachmentInfo);
+  return { email, folder, markdown, attachmentInfo, warnings, category, original: item.bytes, sourceName: item.name };
+}
+
+async function saveOne(result) {
+  const catDir = await baseDir.getDirectoryHandle(result.category, { create: true });
+  const { dir: emailDir, name } = await uniqueDir(catDir, result.folder);
+  result.folder = name;
+
+  await writeFile(emailDir, "email.md", new Blob([result.markdown], { type: "text/markdown" }));
+  await writeFile(emailDir, "original." + result.email.format, result.original);
+
+  if (result.attachmentInfo.length) {
+    const attDir = await emailDir.getDirectoryHandle("attachments", { create: true });
+    for (const a of result.attachmentInfo) await writeFile(attDir, a.filename, a.bytes);
+    const withText = result.attachmentInfo.filter(a => a.text);
+    if (withText.length) {
+      const txtDir = await emailDir.getDirectoryHandle("attachments-as-text", { create: true });
+      for (const a of withText) {
+        await writeFile(txtDir, a.textFile, new Blob([
+          "# " + a.filename + "\n\n*Text pulled out of the attached file. The original is in " +
+          "`attachments/" + a.filename + "`.*\n\n" + a.text + "\n",
+        ], { type: "text/markdown" }));
+      }
+    }
+  }
+
+  const e = result.email;
+  await appendIndex([
+    csvCell(isoStamp(e.date)), csvCell(e.from), csvCell(e.to), csvCell(e.subject),
+    csvCell(result.category), csvCell(result.category + "/" + result.folder),
+    csvCell(result.attachmentInfo.length), csvCell(e.messageId),
+  ].join(",") + "\n");
+  if (e.messageId && indexRows) indexRows.set(e.messageId, true);
+}
+
+function zipOne(result) {
+  const files = {};
+  const base = result.folder + "/";
+  files[base + "email.md"] = new TextEncoder().encode(result.markdown);
+  files[base + "original." + result.email.format] = result.original;
+  for (const a of result.attachmentInfo) {
+    files[base + "attachments/" + a.filename] = a.bytes;
+    if (a.text) {
+      files[base + "attachments-as-text/" + a.textFile] =
+        new TextEncoder().encode("# " + a.filename + "\n\n" + a.text + "\n");
+    }
+  }
+  return new Blob([zipSync(files, { level: 0 })], { type: "application/zip" });
+}
+
+/* ================= UI ================= */
+const resultsEl = document.getElementById("results");
+const summaryEl = document.getElementById("summary");
+const drop = document.getElementById("drop");
+const fileInput = document.getElementById("fileInput");
+let busy = false;
+
+function routeCategory(email, chosen) {
+  if (!document.getElementById("autoRoute").checked) return chosen;
+  const hay = ((email.from || "") + " " + (email.to || "") + " " + (email.subject || "")).toLowerCase();
+  for (const c of categories) {
+    const word = c.replace(/\b(emails?|agency)\b/gi, "").trim().toLowerCase();
+    if (word.length >= 3 && hay.includes(word)) return c;
+  }
+  return chosen;
+}
+
+function addCard(title, sub) {
+  const card = document.createElement("div");
+  card.className = "card";
+  card.innerHTML = "<div class='title'></div><div class='meta'></div>" +
+    "<ul class='files'></ul><div class='status busy'>Reading…</div><div class='warnings'></div>" +
+    "<details style='display:none'><summary>Preview email.md</summary><pre></pre></details>";
+  card.querySelector(".title").textContent = title;
+  card.querySelector(".meta").textContent = sub || "";
+  resultsEl.appendChild(card);
+  return card;
+}
+
+async function handleFiles(fileList) {
+  if (busy) return;
+  const files = [...fileList];
+  if (!files.length) return;
+  busy = true;
+  const chosen = document.getElementById("category").value || PRESET_CATEGORIES[0];
+  localStorage.setItem("lastCategory", chosen);
+
+  summaryEl.style.display = "block";
+  summaryEl.innerHTML = "<b>Opening files…</b>";
+  let items;
+  try {
+    items = await expandInputs(files);
+  } catch (e) {
+    summaryEl.innerHTML = "<b>Could not read those files:</b> " + (e.message || e);
+    busy = false;
+    return;
+  }
+
+  let saved = 0, skipped = 0, failed = 0, attachmentsSaved = 0;
+  const zipFallback = [];
+  summaryEl.innerHTML = "<b>Found " + items.length + " email" + (items.length === 1 ? "" : "s") + ".</b> Working…";
+
+  for (const item of items) {
+    const card = addCard(item.name, item.from ? "from " + item.from : "");
+    const status = card.querySelector(".status");
+    if (item.error) {
+      card.classList.add("error");
+      status.textContent = item.error;
+      status.classList.remove("busy");
+      failed++;
+      continue;
+    }
+    try {
+      const result = await processOne(item, chosen);
+      result.category = routeCategory(result.email, chosen);
+      card.querySelector(".title").textContent = result.email.subject || "(no subject)";
+      card.querySelector(".meta").textContent =
+        (result.email.fromName || result.email.from) + " · " + isoStamp(result.email.date) +
+        " · " + result.attachmentInfo.length + " attachment" + (result.attachmentInfo.length === 1 ? "" : "s");
+
+      const list = card.querySelector(".files");
+      for (const a of result.attachmentInfo) {
+        const li = document.createElement("li");
+        li.className = "kept";
+        li.textContent = "✓ " + a.filename + " (" + Math.max(1, Math.round(a.size / 1024)) + " KB)" +
+          (a.text ? " + text version" : "");
+        list.appendChild(li);
+      }
+      const warnEl = card.querySelector(".warnings");
+      for (const w of result.warnings) {
+        const div = document.createElement("div");
+        div.className = "warn";
+        div.textContent = w;
+        warnEl.appendChild(div);
+      }
+      card.querySelector("details").style.display = "block";
+      card.querySelector("pre").textContent = result.markdown;
+
+      if (result.email.messageId && indexRows && indexRows.has(result.email.messageId)) {
+        status.textContent = "Already in your library — skipped.";
+        status.classList.remove("busy");
+        skipped++;
+        continue;
+      }
+
+      if (hasFolderApi && baseDir) {
+        await saveOne(result);
+        status.textContent = "Saved to " + result.category + " › " + result.folder;
+        saved++;
+        attachmentsSaved += result.attachmentInfo.length;
+      } else {
+        zipFallback.push(result);
+        status.textContent = "Ready — will be in the .zip download.";
+        saved++;
+        attachmentsSaved += result.attachmentInfo.length;
+      }
+      status.classList.remove("busy");
+    } catch (e) {
+      card.classList.add("error");
+      status.textContent = "Could not read this email: " + (e && e.message ? e.message : e);
+      status.classList.remove("busy");
+      failed++;
+    }
+  }
+
+  if (zipFallback.length) {
+    const files = {};
+    for (const r of zipFallback) {
+      const base = r.category + "/" + r.folder + "/";
+      files[base + "email.md"] = new TextEncoder().encode(r.markdown);
+      files[base + "original." + r.email.format] = r.original;
+      for (const a of r.attachmentInfo) {
+        files[base + "attachments/" + a.filename] = a.bytes;
+        if (a.text) files[base + "attachments-as-text/" + a.textFile] = new TextEncoder().encode(a.text);
+      }
+    }
+    downloadBlob("email-context.zip", new Blob([zipSync(files, { level: 0 })], { type: "application/zip" }));
+  }
+
+  summaryEl.innerHTML = "<b>" + saved + " email" + (saved === 1 ? "" : "s") + " filed</b>" +
+    (attachmentsSaved ? " with " + attachmentsSaved + " attachment" + (attachmentsSaved === 1 ? "" : "s") : "") +
+    (skipped ? " · " + skipped + " already in the library" : "") +
+    (failed ? " · " + failed + " could not be read" : "") +
+    (hasFolderApi && baseDir ? "" : " · downloaded as email-context.zip");
+  busy = false;
+}
+
+drop.addEventListener("dragover", e => { e.preventDefault(); drop.classList.add("over"); });
+drop.addEventListener("dragleave", () => drop.classList.remove("over"));
+drop.addEventListener("drop", e => {
+  e.preventDefault(); drop.classList.remove("over");
+  handleFiles(e.dataTransfer.files);
+});
+fileInput.addEventListener("change", () => { handleFiles(fileInput.files); fileInput.value = ""; });
+
+document.getElementById("chooseFolder").addEventListener("click", async () => {
+  try { await setBaseDir(await window.showDirectoryPicker({ mode: "readwrite" })); }
+  catch (e) { /* cancelled */ }
+});
+document.getElementById("newCategory").addEventListener("click", async () => {
+  const name = sanitizeName((window.prompt("Name the new category folder:") || "").trim(), 60);
+  if (!name || name === "untitled") return;
+  if (!categories.includes(name)) categories.push(name);
+  await refreshCategories();
+  document.getElementById("category").value = name;
+});
+const autoBox = document.getElementById("autoRoute");
+autoBox.checked = localStorage.getItem("autoRoute") === "1";
+autoBox.addEventListener("change", () => localStorage.setItem("autoRoute", autoBox.checked ? "1" : "0"));
+
+refreshCategories();
+if (!hasFolderApi) {
+  document.getElementById("folderName").textContent = "not supported in this browser";
+  document.getElementById("chooseFolder").style.display = "none";
+  document.getElementById("folderHint").textContent =
+    "This browser can't write folders directly (use Chrome or Edge for that). Everything you drop " +
+    "will be packaged into one email-context.zip instead — unzip it into your library folder.";
+} else {
+  restoreFolder();
+}
+</script>
