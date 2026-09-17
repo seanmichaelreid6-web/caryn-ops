@@ -1,10 +1,12 @@
 # caryn-ops
 
 Home of the **Outlook Email → Markdown Archive** — a drag-and-drop tool that
-files `.msg`, `.eml`, and PDF emails into organized folders. It extracts regular
-attachments from Outlook files automatically. When every saved message from the
-same thread is dropped together, it combines the messages and all their
-attachments into one archive folder.
+files `.msg`, `.eml`, and PDF emails (or a `.zip` of emails) into organized
+folders. It extracts regular attachments from Outlook files automatically and
+adds a readable text version of each spreadsheet, document and PDF. When every
+saved message from the same thread is dropped together, it combines the
+messages and all their attachments into one archive folder. A running
+`email-index.csv` lists everything filed, and already-filed emails are skipped.
 
 - **The tool:** [`tools/email-pdf-to-markdown.html`](tools/email-pdf-to-markdown.html) —
   a single file that runs entirely in your web browser. Download it, double-click

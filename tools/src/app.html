@@ -84,11 +84,12 @@
 <main>
   <h1>Outlook Email &rarr; Markdown Archive</h1>
   <p class="sub">Save or drag an email out of Outlook, then drop the resulting
-  <b>.eml</b> or <b>.msg</b> file here. The tool creates a named folder containing the
-  Markdown email and every real attachment automatically. PDF remains available as a
-  fallback. To archive a whole thread, drop all of its saved messages together; messages
-  with the same subject are combined into one folder. Everything runs on this computer;
-  nothing is uploaded.</p>
+  <b>.eml</b> or <b>.msg</b> file here &mdash; or a whole <b>.zip</b> of them. The tool
+  creates a named folder containing the Markdown email, every real attachment, and a
+  readable text version of each spreadsheet, document and PDF. Drop all of a thread's
+  saved messages together and they are combined into one folder. Every save is listed in
+  <b>email-index.csv</b>, and an email you already filed is skipped automatically. PDF
+  remains available as a fallback. Everything runs on this computer; nothing is uploaded.</p>
 
   <div id="folderBar">
     <span class="label">Email home folder:</span>
@@ -102,8 +103,8 @@
 
   <label id="drop">
     <div class="big">Drop saved Outlook emails here</div>
-    <div class="hint">Select every message in a thread together to combine all of their attachments &middot; .eml, .msg, or .pdf</div>
-    <input type="file" id="fileInput" accept=".eml,.msg,.pdf,message/rfc822,application/vnd.ms-outlook,application/pdf" multiple>
+    <div class="hint">.eml, .msg, .zip of emails, or .pdf &middot; select every message in a thread together to combine all of their attachments</div>
+    <input type="file" id="fileInput" accept=".eml,.msg,.zip,.pdf,message/rfc822,application/vnd.ms-outlook,application/zip,application/pdf" multiple>
   </label>
 
   <div id="results"></div>
@@ -112,7 +113,9 @@
   More actions &rarr; Save as or Download; you can also drag it to your Desktop.
   <b>Classic Outlook:</b> open the message and choose File &rarr; Save As, or drag it
   to your Desktop. The saved .eml/.msg already contains its attachments, so do not
-  save or print them separately.</footer>
+  save or print them separately.
+  <b>Many emails at once:</b> select them all &rarr; Forward &rarr; Forward as attachment
+  &rarr; send it to yourself &rarr; open it and click Download all. Drop that .zip here.</footer>
 </main>
 
 <script id="email-parsers">
@@ -694,6 +697,7 @@ function resultFromDirect(file, meta, attachments, warnings, sourceFormat) {
     markdown: directMarkdown(meta, cleaned), messageMeta: meta,
     threadKey: subject.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim(),
     sourceNames: [file.name],
+    messageIds: meta.messageId ? [meta.messageId] : [],
   };
 }
 
@@ -716,6 +720,8 @@ function mergeThreadResults(results) {
     sourceFormat: [...new Set(sorted.map(r => r.sourceFormat))].join("/") + " thread",
     attachments, markdown: buildThreadMarkdown(subject, sorted, attachments),
     sourceNames: sorted.flatMap(r => r.sourceNames || []), threadKey: latest.threadKey,
+    messageIds: sorted.flatMap(r => r.messageIds || []),
+    messageMeta: latest.messageMeta, threadMetas: sorted.map(r => r.messageMeta),
   };
 }
 
@@ -739,8 +745,10 @@ async function convertEml(file, onStatus) {
     sent: ((email.headers || []).find(h => h.key === "date") || {}).value || email.date || "",
     to: addressListText(email.to), cc: addressListText(email.cc), bcc: addressListText(email.bcc),
     body: (email.text || htmlToPlainText(email.html || "")).trim(),
+    html: email.html || "",
     fromShort: shortAddressNames([email.from || email.sender])[0] || "",
     recipientShorts: shortAddressNames([...(email.to || []), ...(email.cc || [])]),
+    messageId: (email.messageId || "").replace(/^<|>$/g, "").trim(),
   };
   if (!meta.body) warnings.push("No readable message body was found, but the email headers and attachments were preserved.");
   return resultFromDirect(file, meta, attachments, warnings, "EML");
@@ -780,10 +788,12 @@ async function convertMsg(file, onStatus) {
     sent: info.clientSubmitTime || info.messageDeliveryTime || info.creationTime || "",
     to: recips("to"), cc: recips("cc"), bcc: recips("bcc"),
     body: (info.body || htmlToPlainText(html)).trim(),
+    html,
     fromShort: shortPersonName(senderName, senderEmail),
     recipientShorts: recipients.filter(r => r.recipType === "to" || r.recipType === "cc")
       .map(r => shortPersonName(r.name, r.smtpAddress || r.email)).filter((name, index, all) =>
         name && all.findIndex(other => other.toLowerCase() === name.toLowerCase()) === index),
+    messageId: (info.messageId || "").replace(/^<|>$/g, "").trim(),
   };
   if (!meta.body) warnings.push("No readable message body was found, but the email headers and attachments were preserved.");
   return resultFromDirect(file, meta, attachments, warnings, "MSG");
@@ -931,10 +941,12 @@ async function setBaseDir(handle) {
   baseDir = handle;
   document.getElementById("folderName").textContent = handle.name;
   document.getElementById("folderHint").textContent =
-    "Each save creates: " + handle.name + " \u203a category \u203a email folder \u203a Markdown file.";
+    "Each save creates: " + handle.name + " \u203a category \u203a email folder \u203a Markdown file, " +
+    "attachments, and text versions. Everything filed is listed in " + handle.name + " \u203a " + INDEX_FILE + ".";
   document.getElementById("chooseFolder").textContent = "Change folder";
   document.getElementById("reconnectFolder").style.display = "none";
   await refreshCategories();
+  await loadIndex();
   document.querySelectorAll("button.save").forEach(b => { b.disabled = false; });
   idb.set("baseDir", handle);
 }
@@ -967,7 +979,7 @@ async function restoreFolder() {
   } catch (e) { /* stored handle unusable; user picks again */ }
 }
 
-async function saveIntoDirectory(parentDir, name, markdown, attachments) {
+async function saveIntoDirectory(parentDir, name, markdown, attachments, texts) {
   const emailDir = await parentDir.getDirectoryHandle(name, { create: true });
   const fileHandle = await emailDir.getFileHandle(name + ".md", { create: true });
   const w = await fileHandle.createWritable();
@@ -979,11 +991,20 @@ async function saveIntoDirectory(parentDir, name, markdown, attachments) {
     await aw.write(attachment.bytes);
     await aw.close();
   }
+  if (texts && texts.length) {
+    const textDir = await emailDir.getDirectoryHandle(TEXT_DIR, { create: true });
+    for (const t of texts) {
+      const th = await textDir.getFileHandle(t.name, { create: true });
+      const tw = await th.createWritable();
+      await tw.write(new Blob([t.markdown], { type: "text/markdown" }));
+      await tw.close();
+    }
+  }
 }
 
-async function saveIntoFolder(category, name, markdown, attachments) {
+async function saveIntoFolder(category, name, markdown, attachments, texts) {
   const catDir = await baseDir.getDirectoryHandle(category, { create: true });
-  await saveIntoDirectory(catDir, name, markdown, attachments);
+  await saveIntoDirectory(catDir, name, markdown, attachments, texts);
 }
 
 /* ================= fallback saving: zip that expands to the folder ================= */
@@ -1036,6 +1057,200 @@ function download(filename, blobOrText) {
   a.click();
   a.remove();
   setTimeout(() => URL.revokeObjectURL(url), 10000);
+}
+
+/* ================= bulk .zip intake ================= */
+function zipToFiles(file, bytes) {
+  let entries;
+  try { entries = EmailParsers.unzipSync(bytes); }
+  catch (e) { throw new Error("The file " + file.name + " could not be opened as a .zip."); }
+  const out = [];
+  for (const [path, data] of Object.entries(entries)) {
+    const base = path.split("/").pop();
+    if (!base || base.startsWith(".") || !data || !data.length) continue;
+    if (!/\.(eml|msg)$/i.test(base)) continue;
+    const inner = new File([data], base, { lastModified: file.lastModified });
+    inner.fromZip = file.name;
+    out.push(inner);
+  }
+  if (!out.length) throw new Error(file.name + " contains no .eml or .msg files.");
+  return out;
+}
+
+async function expandInputs(files) {
+  const out = [];
+  for (const file of files) {
+    if (/\.zip$/i.test(file.name)) out.push(...zipToFiles(file, new Uint8Array(await file.arrayBuffer())));
+    else out.push(file);
+  }
+  return out;
+}
+
+/* ================= readable text versions of attachments =================
+ * Spreadsheets become Markdown tables, Word documents become Markdown, PDFs
+ * and text files contribute their text. The original file is always saved
+ * too; these copies exist so an AI can read the contents directly. */
+const TEXT_DIR = "attachments-as-text";
+let turndownSvc = null;
+function htmlToMarkdown(html) {
+  if (!turndownSvc) {
+    turndownSvc = new EmailParsers.TurndownService({ headingStyle: "atx", codeBlockStyle: "fenced", bulletListMarker: "-" });
+    turndownSvc.remove(["style", "script", "head", "meta", "link"]);
+  }
+  try { return turndownSvc.turndown(html).replace(/\n{3,}/g, "\n\n").trim(); }
+  catch (e) { return htmlToPlainText(html); }
+}
+
+async function attachmentToText(att) {
+  const name = (att.name || "").toLowerCase();
+  const bytes = att.bytes;
+  try {
+    if (/\.(xlsx|xlsm|xlsb|xls|csv|tsv)$/.test(name)) {
+      const wb = EmailParsers.XLSX.read(bytes, { type: "array" });
+      let out = "";
+      for (const sheetName of wb.SheetNames) {
+        const rows = EmailParsers.XLSX.utils.sheet_to_json(wb.Sheets[sheetName], { header: 1, blankrows: false, defval: "" });
+        const width = rows.length ? Math.max(...rows.map(r => r.length)) : 0;
+        if (!width) continue;
+        const cell = (r, i) => String(r[i] === undefined || r[i] === null ? "" : r[i]).replace(/\|/g, "\\|").replace(/\r?\n/g, " ");
+        const line = r => "| " + Array.from({ length: width }, (_, i) => cell(r, i)).join(" | ") + " |\n";
+        if (wb.SheetNames.length > 1) out += "## " + sheetName + "\n\n";
+        out += line(rows[0]) + "|" + " --- |".repeat(width) + "\n";
+        for (const r of rows.slice(1)) out += line(r);
+        out += "\n";
+      }
+      return out.trim() || null;
+    }
+    if (/\.docx$/.test(name)) {
+      const buf = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
+      const res = await EmailParsers.mammoth.convertToHtml({ arrayBuffer: buf });
+      return htmlToMarkdown(res.value || "") || null;
+    }
+    if (/\.pdf$/.test(name)) {
+      const pdf = await pdfjsLib.getDocument({ data: bytes.slice(), isEvalSupported: false }).promise;
+      let out = "";
+      for (let p = 1; p <= pdf.numPages; p++) {
+        const content = await (await pdf.getPage(p)).getTextContent();
+        const text = content.items.map(i => i.str).join(" ").replace(/\s+/g, " ").trim();
+        if (text) out += (pdf.numPages > 1 ? "## Page " + p + "\n\n" : "") + text + "\n\n";
+      }
+      return out.trim() || null;
+    }
+    if (/\.(txt|md|log|json|xml|html?)$/.test(name)) {
+      const text = new TextDecoder().decode(bytes).trim();
+      return (/\.html?$/.test(name) ? htmlToMarkdown(text) : text) || null;
+    }
+  } catch (e) { /* unreadable: the original file is still saved */ }
+  return null;
+}
+
+async function extractAttachmentTexts(attachments) {
+  const texts = [];
+  const used = new Set();
+  for (const a of attachments || []) {
+    const text = await attachmentToText(a);
+    if (!text) continue;
+    const stem = a.name.replace(/\.[^.]+$/, "");
+    let file = stem + ".md", n = 2;
+    while (used.has(file.toLowerCase())) file = stem + " (" + n++ + ").md";
+    used.add(file.toLowerCase());
+    texts.push({
+      forName: a.name, name: file,
+      markdown: "# " + a.name + "\n\n*Text pulled out of the attached file. The original is saved in the " +
+        "email folder as `../" + a.name + "`.*\n\n" + text + "\n",
+    });
+  }
+  return texts;
+}
+
+/* ================= front matter, cloud links ================= */
+const CLOUD_LINK_RE = /https?:\/\/[^\s)"'<>]*(?:sharepoint\.com|onedrive\.live\.com|1drv\.ms)[^\s)"'<>]*/gi;
+function yamlValue(s) {
+  return '"' + String(s == null ? "" : s).replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/\r?\n/g, " ") + '"';
+}
+function pad2(n) { return String(n).padStart(2, "0"); }
+function localStamp(d) {
+  return d.getFullYear() + "-" + pad2(d.getMonth() + 1) + "-" + pad2(d.getDate()) + " " +
+    pad2(d.getHours()) + ":" + pad2(d.getMinutes());
+}
+
+// Adds a machine-readable header block, links each attachment to its text
+// version, and lists OneDrive/SharePoint links whose files are not in the email.
+function finalizeMarkdown(result) {
+  const metas = result.threadMetas || [result.messageMeta || {}];
+  const latest = metas[metas.length - 1] || {};
+  const validDate = result.date instanceof Date && !isNaN(result.date);
+  let fm = "---\n";
+  fm += "subject: " + yamlValue(result.subject) + "\n";
+  fm += "from: " + yamlValue(latest.from || "") + "\n";
+  fm += "to: " + yamlValue(latest.to || "") + "\n";
+  if (latest.cc) fm += "cc: " + yamlValue(latest.cc) + "\n";
+  fm += "date: " + yamlValue(validDate ? result.date.toISOString() : "") + "\n";
+  fm += "date_local: " + yamlValue(validDate ? localStamp(result.date) : "") + "\n";
+  fm += "messages: " + metas.length + "\n";
+  fm += "message_ids: [" + (result.messageIds || []).map(yamlValue).join(", ") + "]\n";
+  fm += "source_files: [" + (result.sourceNames || []).map(yamlValue).join(", ") + "]\n";
+  fm += "attachments: [" + (result.attachments || []).map(a => yamlValue(a.name)).join(", ") + "]\n";
+  fm += "attachment_text_versions: [" +
+    (result.attachmentTexts || []).map(t => yamlValue(TEXT_DIR + "/" + t.name)).join(", ") + "]\n";
+  fm += "---\n\n";
+
+  let body = result.markdown;
+  for (const t of result.attachmentTexts || []) {
+    const link = "](./" + encodeURI(t.forName) + ")";
+    body = body.split(link).join(link + " — text version: [" + t.name.replace(/[\[\]]/g, "") +
+      "](./" + TEXT_DIR + "/" + encodeURI(t.name) + ")");
+  }
+  const haystack = metas.map(m => (m.body || "") + "\n" + (m.html || "")).join("\n").replace(/&amp;/g, "&");
+  const cloud = [...new Set(haystack.match(CLOUD_LINK_RE) || [])];
+  let tail = "";
+  if (cloud.length) {
+    tail = "\n---\n\n## Cloud links in this email\n\nThese files live in OneDrive/SharePoint, not inside " +
+      "the email, so they were not saved here. Download them by hand if you need them:\n\n";
+    for (const u of cloud) tail += "- " + u + "\n";
+  }
+  return fm + body + tail;
+}
+
+/* ================= library index (email-index.csv) ================= */
+const INDEX_FILE = "email-index.csv";
+const INDEX_HEADER = "date,from,to,subject,category,folder,messages,attachments,message_ids\n";
+let indexIds = new Set();
+function csvCell(s) { return '"' + String(s == null ? "" : s).replace(/"/g, '""') + '"'; }
+
+async function loadIndex() {
+  indexIds = new Set();
+  if (!baseDir) return;
+  try {
+    const fh = await baseDir.getFileHandle(INDEX_FILE);
+    const text = await (await fh.getFile()).text();
+    for (const line of text.split("\n").slice(1)) {
+      const m = line.match(/"((?:[^"]|"")*)"\s*$/);
+      if (!m) continue;
+      for (const id of m[1].replace(/""/g, '"').split(" | ")) if (id.trim()) indexIds.add(id.trim());
+    }
+  } catch (e) { /* no index yet */ }
+}
+
+async function appendIndex(result, category, folderName) {
+  if (!baseDir) return;
+  const metas = result.threadMetas || [result.messageMeta || {}];
+  const latest = metas[metas.length - 1] || {};
+  const validDate = result.date instanceof Date && !isNaN(result.date);
+  const row = [
+    csvCell(validDate ? localStamp(result.date) : ""), csvCell(latest.from || ""), csvCell(latest.to || ""),
+    csvCell(result.subject), csvCell(category), csvCell(category + "/" + folderName),
+    csvCell(metas.length), csvCell((result.attachments || []).length),
+    csvCell((result.messageIds || []).join(" | ")),
+  ].join(",") + "\n";
+  const fh = await baseDir.getFileHandle(INDEX_FILE, { create: true });
+  let existing = "";
+  try { existing = await (await fh.getFile()).text(); } catch (e) { /* new file */ }
+  const head = existing.trim() ? existing.replace(/\n*$/, "\n") : INDEX_HEADER;
+  const w = await fh.createWritable();
+  await w.write(new Blob([head + row], { type: "text/csv" }));
+  await w.close();
+  for (const id of result.messageIds || []) indexIds.add(id);
 }
 
 /* ================= UI ================= */
@@ -1117,10 +1332,14 @@ function showResult(card, result) {
     localStorage.setItem("lastCategory", category);
     if (hasFolderApi && baseDir) {
       try {
-        await saveIntoFolder(category, name, result.markdown, result.attachments);
+        await saveIntoFolder(category, name, result.markdown, result.attachments, result.attachmentTexts);
+        await appendIndex(result, category, name);
+        const nText = (result.attachmentTexts || []).length;
         status.textContent = "Saved: " + (baseDir.name ? baseDir.name + " \u203a " : "") +
           category + " \u203a " + name + " \u2014 Markdown and " + result.attachments.length +
-          " attachment" + (result.attachments.length === 1 ? "" : "s") + " saved together.";
+          " attachment" + (result.attachments.length === 1 ? "" : "s") +
+          (nText ? " (+ " + nText + " text version" + (nText === 1 ? "" : "s") + ")" : "") +
+          " saved together. Listed in " + INDEX_FILE + ".";
       } catch (e) {
         status.textContent = "Could not save: " + (e.message || e);
         status.classList.add("busy");
@@ -1129,6 +1348,9 @@ function showResult(card, result) {
       const data = new TextEncoder().encode(result.markdown);
       const entries = [{ path: name + "/" + name + ".md", data }];
       for (const a of result.attachments) entries.push({ path: name + "/" + a.name, data: a.bytes });
+      for (const t of result.attachmentTexts || []) {
+        entries.push({ path: name + "/" + TEXT_DIR + "/" + t.name, data: new TextEncoder().encode(t.markdown) });
+      }
       download(name + ".zip", makeZip(entries));
       status.textContent = "Downloaded " + name + ".zip \u2014 unzip it inside your \u201C" +
         category + "\u201D folder.";
@@ -1151,11 +1373,23 @@ function showResult(card, result) {
 }
 
 async function handleFiles(fileList) {
-  const files = [...fileList].filter(f => /\.(eml|msg|pdf)$/i.test(f.name));
+  let files;
+  try {
+    files = await expandInputs([...fileList]);
+  } catch (e) {
+    const card = addCard({ name: "zip file" });
+    card.classList.add("error");
+    const st = card.querySelector(".status");
+    st.textContent = e && e.message ? e.message : String(e);
+    st.classList.remove("busy");
+    return;
+  }
+  files = files.filter(f => /\.(eml|msg|pdf)$/i.test(f.name));
   if (!files.length) return;
-  const progressCard = addCard({ name: files.length === 1 ? files[0].name : files.length + " selected files" });
+  const progressCard = addCard({ name: files.length === 1 ? files[0].name : files.length + " files" });
   const progressStatus = progressCard.querySelector(".status");
   const converted = [];
+  let skipped = 0;
   for (let index = 0; index < files.length; index++) {
     const file = files[index];
     try {
@@ -1164,6 +1398,15 @@ async function handleFiles(fileList) {
       const result = await convert(file, msg => {
         progressStatus.textContent = "File " + (index + 1) + " of " + files.length + ": " + msg;
       });
+      const ids = result.messageIds || [];
+      if (ids.length && ids.every(id => indexIds.has(id))) {
+        const card = addCard(file);
+        const st = card.querySelector(".status");
+        st.textContent = "Already in your library (listed in " + INDEX_FILE + " with the same Message-ID) — skipped.";
+        st.classList.remove("busy");
+        skipped++;
+        continue;
+      }
       converted.push(result);
     } catch (e) {
       const card = addCard(file);
@@ -1173,7 +1416,6 @@ async function handleFiles(fileList) {
       status.classList.remove("busy");
     }
   }
-  progressCard.remove();
 
   const groups = new Map();
   for (const result of converted) {
@@ -1183,12 +1425,24 @@ async function handleFiles(fileList) {
   }
   for (const group of groups.values()) {
     const result = group.length > 1 ? mergeThreadResults(group) : group[0];
+    progressStatus.textContent = "Preparing text versions of attachments for “" + result.subject + "”…";
+    result.attachmentTexts = await extractAttachmentTexts(result.attachments);
+    const unreadable = result.attachments
+      .filter(a => /\.(pdf|docx|xlsx|xlsm|xls|csv)$/i.test(a.name) &&
+        !result.attachmentTexts.some(t => t.forName === a.name))
+      .map(a => a.name);
+    if (unreadable.length) {
+      result.warnings.push("No text could be read from " + unreadable.join(", ") +
+        " (a scan or an image, most likely) — the original file is saved either way.");
+    }
+    result.markdown = finalizeMarkdown(result);
     const sourceLabel = result.sourceNames.length === 1
       ? result.sourceNames[0] : result.sourceNames.length + " messages in one thread";
     const card = addCard({ name: sourceLabel });
     card.dataset.origName = sourceLabel;
     showResult(card, result);
   }
+  progressCard.remove();
 }
 
 drop.addEventListener("dragover", e => { e.preventDefault(); drop.classList.add("over"); });
