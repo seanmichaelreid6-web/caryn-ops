@@ -130,6 +130,12 @@ Embedded signature graphics and tracking/logo images are ignored so they do not
 clutter the archive. Normal attachments are saved. Duplicate attachment names
 are made unique automatically.
 
+Security banners that mail gateways add to outside email — "This email
+originated from outside of the organization…", "You don't often get email
+from…", "Report Suspicious" and similar — are removed from the message text,
+and an `[EXTERNAL]` tag is dropped from the subject, so the archive holds only
+what the sender actually wrote.
+
 If a sender used a OneDrive/SharePoint **link** instead of attaching the file,
 that file is not inside the email and cannot be extracted. The Markdown lists
 such links under "Cloud links in this email" so you can download them by hand.

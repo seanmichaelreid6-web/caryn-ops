@@ -1269,7 +1269,7 @@ function bodyToMarkdown(bodyLines) {
     if (line.gapBefore && out) out += "\n";
     out += line.text + "\n";
   }
-  return out.trim();
+  return stripSecurityBanners(out.trim());
 }
 
 const FIELD_ORDER = ["from", "sent", "to", "cc", "bcc", "subject", "importance"];
@@ -1329,11 +1329,54 @@ function uniqueAttachments(items, reservedNames) {
   });
 }
 
+const SUBJECT_TAG_RE = /^\s*[\[\(\{]?\s*(external( (email|sender|message))?|ext|caution|warning|suspected spam|spam)\s*[\]\)\}]?\s*:?\s*/i;
 function baseSubjectOf(subject) {
-  return (subject || "Email")
-    .replace(/^[\[\(]\s*draft\s*[\]\)]\s*/i, "")
-    .replace(/^\s*((re|fw|fwd)\s*:\s*)+/i, "")
-    .trim() || "Email";
+  let out = subject || "Email";
+  for (let i = 0; i < 4; i++) {
+    out = out
+      .replace(/^[\[\(]\s*draft\s*[\]\)]\s*/i, "")
+      .replace(/^\s*((re|fw|fwd)\s*:\s*)+/i, "")
+      .replace(SUBJECT_TAG_RE, "");
+  }
+  return out.trim() || "Email";
+}
+
+/* ================= security banners =================
+ * Mail gateways and Outlook prepend warnings such as "This email originated
+ * from outside of the organization..." to every external message. They carry
+ * no information about the email itself, so they are removed from the body. */
+const BANNER_RE = new RegExp([
+  "originat(ed|es|ing) from outside",
+  "from outside (of )?(the|your|our) (organi[sz]ation|company|network)",
+  "outside (of )?(the|your|our) (organi[sz]ation|company)",
+  "external (e-?mail|sender|source|message|party)",
+  "came from an external",
+  "(do not|don'?t|never) (click|open|follow) .{0,40}(links?|attachments?)",
+  "unless you (recognize|recognise|know|trust) (the )?(sender|source)",
+  "you don'?t often get e-?mail from",
+  "learn why this is important",
+  "report (this )?(e-?mail|message) as (phishing|suspicious|spam|junk)",
+  "report suspicious",
+  "^\\s*[\\[\\(\\{]?\\s*(external|ext|caution|warning)\\s*(e-?mail|sender|message)?\\s*[\\]\\)\\}]?\\s*:?\\s*$",
+].join("|"), "i");
+
+function stripSecurityBanners(text) {
+  if (!text) return text;
+  const paragraphs = text.replace(/\r\n/g, "\n").split(/\n\s*\n/);
+  const kept = [];
+  for (const para of paragraphs) {
+    const lines = para.split("\n");
+    const isBanner = line => line.trim().length <= 400 && BANNER_RE.test(line);
+    const nonEmpty = lines.filter(l => l.trim());
+    const hits = nonEmpty.filter(isBanner).length;
+    // a short paragraph made mostly of warning lines goes entirely (this also
+    // catches a wrapped banner whose continuation line matches on its own)
+    if (nonEmpty.length && para.trim().length <= 600 && hits / nonEmpty.length >= 0.6) continue;
+    // otherwise drop only the warning lines and keep the real text around them
+    const rest = lines.filter(line => !isBanner(line));
+    if (rest.join("").trim()) kept.push(rest.join("\n"));
+  }
+  return kept.join("\n\n").trim();
 }
 
 function shortPersonName(name, email) {
@@ -1496,6 +1539,8 @@ function resultFromDirect(file, meta, attachments, warnings, sourceFormat) {
     date = new Date(file.lastModified || Date.now());
     warnings.push("The email date could not be read, so the file date was used for the folder name.");
   }
+  meta.body = stripSecurityBanners(meta.body || "");
+  if (!meta.body) warnings.push("The message body contained only security warnings, which are removed; headers and attachments were preserved.");
   const sender = meta.fromShort || senderNameOf({ fields: { from: meta.from || "" } });
   const finalName = buildArchiveName(date, sender, meta.recipientShorts, subject, attachments.length);
   const mdName = markdownFileName(date, subject);
