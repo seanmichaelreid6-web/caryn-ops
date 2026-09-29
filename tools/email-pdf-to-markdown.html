@@ -1320,9 +1320,9 @@ function uniqueAttachments(items, reservedNames) {
   return items.map((item, index) => {
     let original = sanitizeAttachmentName(item.name || ("attachment-" + (index + 1)));
     const dot = original.lastIndexOf(".");
-    const stem = dot > 0 ? original.slice(0, dot) : original;
     const ext = dot > 0 ? original.slice(dot) : "";
-    let name = original, n = 2;
+    const stem = clip(dot > 0 ? original.slice(0, dot) : original, Math.max(10, MAX_ATTACHMENT_NAME - ext.length));
+    let name = stem + ext, n = 2;
     while (used.has(name.toLowerCase())) name = stem + " (" + n++ + ")" + ext;
     used.add(name.toLowerCase());
     return { ...item, name, bytes: item.bytes instanceof Uint8Array ? item.bytes : new Uint8Array(item.bytes) };
@@ -1362,15 +1362,39 @@ function formatArchiveDate(date) {
   return MONTH_FULL[date.getMonth()] + " " + date.getDate();
 }
 
+// Windows refuses paths longer than about 260 characters, and a library on a
+// OneDrive desktop already spends ~80 of them. Every name this tool creates
+// stays short so the deepest file (folder + attachment or text version) fits.
+const MAX_FOLDER_NAME = 90;
+const MAX_MD_NAME = 60;
+const MAX_ATTACHMENT_NAME = 60;
+const MAX_TEXT_NAME = 60;
+function clip(s, n) {
+  s = String(s || "");
+  if (s.length <= n) return s;
+  const cut = s.slice(0, n);
+  const space = cut.lastIndexOf(" ");
+  return (space > n * 0.5 ? cut.slice(0, space) : cut).trim();
+}
+
+// The Markdown file inside the folder gets a short name of its own instead of
+// repeating the folder name, which doubled the path length.
+function markdownFileName(date, subject) {
+  return sanitizeName(clip(sanitizeName(formatArchiveDate(date) + "_" + baseSubjectOf(subject)), MAX_MD_NAME)) + ".md";
+}
+
 function buildArchiveName(date, fromShort, recipientShorts, subject, attachmentCount) {
   const datePart = formatArchiveDate(date);
-  const fromPart = fromShort || "Unknown";
-  const toPart = (recipientShorts || []).length ? recipientShorts.join(",") : "Unknown";
+  const fromPart = clip(fromShort || "Unknown", 20);
+  const recips = recipientShorts || [];
+  const toPart = recips.length
+    ? clip(recips.slice(0, 2).join(","), 30) + (recips.length > 2 ? "+" + (recips.length - 2) : "")
+    : "Unknown";
   const suffix = "_" + attachmentCount + " attachment" + (attachmentCount === 1 ? "" : "s");
   const prefix = datePart + "_From " + fromPart + "_To " + toPart + "_";
   const cleanSubject = sanitizeName(baseSubjectOf(subject));
-  const subjectRoom = Math.max(12, 120 - prefix.length - suffix.length);
-  return sanitizeName(prefix + cleanSubject.slice(0, subjectRoom).trim() + suffix);
+  const subjectRoom = Math.max(12, MAX_FOLDER_NAME - prefix.length - suffix.length);
+  return sanitizeName(prefix + clip(cleanSubject, subjectRoom) + suffix);
 }
 
 function addressText(address) {
@@ -1474,10 +1498,11 @@ function resultFromDirect(file, meta, attachments, warnings, sourceFormat) {
   }
   const sender = meta.fromShort || senderNameOf({ fields: { from: meta.from || "" } });
   const finalName = buildArchiveName(date, sender, meta.recipientShorts, subject, attachments.length);
-  const cleaned = uniqueAttachments(attachments, [finalName + ".md"]);
+  const mdName = markdownFileName(date, subject);
+  const cleaned = uniqueAttachments(attachments, [mdName]);
   meta.subject = subject;
   return {
-    name: finalName, subject, sender, date, warnings,
+    name: finalName, mdName, subject, sender, date, warnings,
     messageCount: 1, usedOcr: false, sourceFormat, attachments: cleaned,
     markdown: directMarkdown(meta, cleaned), messageMeta: meta,
     threadKey: subject.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim(),
@@ -1496,11 +1521,12 @@ function mergeThreadResults(results) {
   });
   const name = buildArchiveName(latest.date, latest.messageMeta.fromShort || latest.sender,
     latest.messageMeta.recipientShorts, subject, rawAttachments.length);
-  const attachments = uniqueAttachments(rawAttachments, [name + ".md"]);
+  const mdName = markdownFileName(latest.date, subject);
+  const attachments = uniqueAttachments(rawAttachments, [mdName]);
   const warnings = sorted.flatMap(r => r.warnings || []);
   warnings.unshift("Combined " + sorted.length + " selected messages with the same subject into one thread archive.");
   return {
-    name, subject, sender: latest.sender, date: latest.date, warnings,
+    name, mdName, subject, sender: latest.sender, date: latest.date, warnings,
     messageCount: sorted.length, usedOcr: false,
     sourceFormat: [...new Set(sorted.map(r => r.sourceFormat))].join("/") + " thread",
     attachments, markdown: buildThreadMarkdown(subject, sorted, attachments),
@@ -1652,8 +1678,9 @@ async function convertPdf(file, onStatus) {
   name = sanitizeName(name);
 
   const markdown = buildMarkdown(subject, messages, preamble);
-  return { name, markdown, subject, sender, date, messageCount: messages.length, usedOcr,
-    warnings, sourceFormat: "PDF", attachments: [], sourceNames: [file.name] };
+  return { name, mdName: markdownFileName(date, subject), markdown, subject, sender, date,
+    messageCount: messages.length, usedOcr, warnings, sourceFormat: "PDF", attachments: [],
+    sourceNames: [file.name], messageIds: [] };
 }
 
 /* ================= saving: real folders via the File System Access API ================= */
@@ -1764,9 +1791,9 @@ async function restoreFolder() {
   } catch (e) { /* stored handle unusable; user picks again */ }
 }
 
-async function saveIntoDirectory(parentDir, name, markdown, attachments, texts) {
+async function saveIntoDirectory(parentDir, name, mdName, markdown, attachments, texts) {
   const emailDir = await parentDir.getDirectoryHandle(name, { create: true });
-  const fileHandle = await emailDir.getFileHandle(name + ".md", { create: true });
+  const fileHandle = await emailDir.getFileHandle(mdName, { create: true });
   const w = await fileHandle.createWritable();
   await w.write(new Blob([markdown], { type: "text/markdown" }));
   await w.close();
@@ -1787,9 +1814,58 @@ async function saveIntoDirectory(parentDir, name, markdown, attachments, texts) 
   }
 }
 
-async function saveIntoFolder(category, name, markdown, attachments, texts) {
+async function saveIntoFolder(category, name, mdName, markdown, attachments, texts) {
   const catDir = await baseDir.getDirectoryHandle(category, { create: true });
-  await saveIntoDirectory(catDir, name, markdown, attachments, texts);
+  await saveIntoDirectory(catDir, name, mdName, markdown, attachments, texts);
+}
+
+// Chrome reports a path Windows rejects (too long) as "not found".
+function isPathError(e) {
+  return !!e && (e.name === "NotFoundError" ||
+    /could not be found|path.*too long|name.*too long/i.test(e.message || ""));
+}
+
+// Remove a folder only if everything in it is something this save created.
+async function removeIfOurs(parentDir, name, ourNames) {
+  try {
+    const dir = await parentDir.getDirectoryHandle(name);
+    for await (const [entry] of dir.entries()) if (!ourNames.has(entry)) return false;
+    await parentDir.removeEntry(name, { recursive: true });
+    return true;
+  } catch (e) { return false; }
+}
+
+async function saveResult(result, category, name) {
+  const where = (baseDir.name ? baseDir.name + " \u203a " : "") + category + " \u203a ";
+  const nAtt = result.attachments.length;
+  const nText = (result.attachmentTexts || []).length;
+  const summary = " \u2014 Markdown and " + nAtt + " attachment" + (nAtt === 1 ? "" : "s") +
+    (nText ? " (+ " + nText + " text version" + (nText === 1 ? "" : "s") + ")" : "") +
+    " saved together. Listed in " + INDEX_FILE + ".";
+  const ours = new Set([result.mdName, "email.md", TEXT_DIR, ...result.attachments.map(a => a.name)]);
+  try {
+    await saveIntoFolder(category, name, result.mdName, result.markdown, result.attachments, result.attachmentTexts);
+    await appendIndex(result, category, name);
+    return { ok: true, name, message: "Saved: " + where + name + summary };
+  } catch (e) {
+    if (!isPathError(e)) return { ok: false, message: "Could not save: " + (e.message || e) };
+  }
+  // The full path was too long for Windows. Clear whatever the failed attempt
+  // created, then retry with a much shorter folder name and a fixed file name.
+  const catDir = await baseDir.getDirectoryHandle(category, { create: true });
+  await removeIfOurs(catDir, name, ours);
+  const shortName = sanitizeName(clip(sanitizeName(formatArchiveDate(result.date) + "_" + baseSubjectOf(result.subject)), 40));
+  try {
+    await saveIntoFolder(category, shortName, "email.md", result.markdown, result.attachments, result.attachmentTexts);
+    await appendIndex(result, category, shortName);
+    return { ok: true, name: shortName, message: "Saved: " + where + shortName + summary +
+      " The full name was too long for Windows, so a shorter folder name was used." };
+  } catch (e) {
+    await removeIfOurs(catDir, shortName, ours);
+    return { ok: false, message: "Could not save: this location\u2019s path is too long for Windows even with a " +
+      "short folder name. Move your email home folder closer to the top of the drive (for example " +
+      "C:\\Emails), click Change folder to pick it, and try again." };
+  }
 }
 
 /* ================= fallback saving: zip that expands to the folder ================= */
@@ -1935,7 +2011,7 @@ async function extractAttachmentTexts(attachments) {
   for (const a of attachments || []) {
     const text = await attachmentToText(a);
     if (!text) continue;
-    const stem = a.name.replace(/\.[^.]+$/, "");
+    const stem = clip(a.name.replace(/\.[^.]+$/, ""), MAX_TEXT_NAME - 3);
     let file = stem + ".md", n = 2;
     while (used.has(file.toLowerCase())) file = stem + " (" + n++ + ").md";
     used.add(file.toLowerCase());
@@ -2116,22 +2192,16 @@ function showResult(card, result) {
     }
     localStorage.setItem("lastCategory", category);
     if (hasFolderApi && baseDir) {
-      try {
-        await saveIntoFolder(category, name, result.markdown, result.attachments, result.attachmentTexts);
-        await appendIndex(result, category, name);
-        const nText = (result.attachmentTexts || []).length;
-        status.textContent = "Saved: " + (baseDir.name ? baseDir.name + " \u203a " : "") +
-          category + " \u203a " + name + " \u2014 Markdown and " + result.attachments.length +
-          " attachment" + (result.attachments.length === 1 ? "" : "s") +
-          (nText ? " (+ " + nText + " text version" + (nText === 1 ? "" : "s") + ")" : "") +
-          " saved together. Listed in " + INDEX_FILE + ".";
-      } catch (e) {
-        status.textContent = "Could not save: " + (e.message || e);
+      const outcome = await saveResult(result, category, name);
+      status.textContent = outcome.message;
+      if (outcome.ok) {
+        if (outcome.name !== name) nameInput.value = outcome.name;
+      } else {
         status.classList.add("busy");
       }
     } else {
       const data = new TextEncoder().encode(result.markdown);
-      const entries = [{ path: name + "/" + name + ".md", data }];
+      const entries = [{ path: name + "/" + result.mdName, data }];
       for (const a of result.attachments) entries.push({ path: name + "/" + a.name, data: a.bytes });
       for (const t of result.attachmentTexts || []) {
         entries.push({ path: name + "/" + TEXT_DIR + "/" + t.name, data: new TextEncoder().encode(t.markdown) });

@@ -105,7 +105,10 @@ them into a folder saves each one as a `.msg` file — that works too.
    large drop area. An email that is already in your library (same Message-ID
    in `email-index.csv`) is skipped, so re-dropping a batch is safe.
 2. Review the proposed name. The default format is
-   **`Date_From Sender_To Recipients_Subject_number of attachments`**.
+   **`Date_From Sender_To Recipients_Subject_number of attachments`** — up to
+   two recipients (then `+N`), kept under about 90 characters so the full path
+   stays within Windows' limit. The Markdown file inside is named
+   `Date_Subject.md`.
 3. Pick a preset category or choose **+ New category folder…**.
 4. Click **Save to folder**.
 
@@ -115,7 +118,7 @@ The result looks like this:
 [chosen save folder]/
   email-index.csv
   September 1_From Mary Kate Ellis_To Tim_Rates and Cost_2 attachments/
-      September 1_From Mary Kate Ellis_To Tim_Rates and Cost_2 attachments.md
+      September 1_Rates and Cost.md
       updated-rates.xlsx
       plan-summary.pdf
       attachments-as-text/
@@ -133,6 +136,16 @@ such links under "Cloud links in this email" so you can download them by hand.
 
 A scanned PDF attachment has no text inside it; the original is still saved and
 the tool tells you no text version could be made.
+
+## If you see "Could not save: A requested file or directory could not be found"
+
+That is Windows refusing a path longer than about 260 characters — it happens
+when your library folder sits deep inside OneDrive and the email has a long
+subject or many recipients. The tool now keeps every name short, and if Windows
+still refuses it automatically retries with a 40-character folder name and
+`email.md`, then tells you it did so. If even that fails, move your email home
+folder closer to the top of the drive (for example `C:\Emails`), click
+**Change folder** to pick it, and try again.
 
 ## PDF fallback
 
