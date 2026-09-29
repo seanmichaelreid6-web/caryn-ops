@@ -143,33 +143,37 @@ such links under "Cloud links in this email" so you can download them by hand.
 A scanned PDF attachment has no text inside it; the original is still saved and
 the tool tells you no text version could be made.
 
-## If Save to folder does not work
+## Saving never dead-ends
 
-- The moment you choose or reconnect your email home folder, the tool creates
-  and deletes a small test file there and shows **Folder OK** — or the exact
-  problem. **Check folder access** repeats that test any time.
-- If the folder was moved, renamed or deleted after you chose it, the tool's
-  saved link to it is dead. The message says so; click **Change folder** and
-  pick it again.
-- Every error is shown on the card with its name and message, and a **Copy
-  error details** button puts a report on the clipboard you can paste when
-  asking for help.
-- **Download as .zip** on every card gives you the same folder (Markdown,
-  attachments, text versions) as a zip file, whatever the browser can or
-  cannot do. Unzip it inside the category folder.
-- The version number next to the title tells you which copy of the tool is
-  open; if it is older than the one you just downloaded, the browser is
-  opening an old copy from a different location.
+- **Save all** at the top saves every email on the page in one click.
+- If an email can't be written into your folder for any reason, it is
+  **downloaded as a .zip automatically** and the card says why. Every zip is
+  laid out `category / email folder / files`: open it and drag the folder
+  inside onto your email home folder, and Windows merges it into the right
+  category folder.
+- **Download all as one .zip** gives you everything on the page in a single
+  zip, whatever the browser can or can't do.
+- When you choose or reconnect your email home folder, the tool creates and
+  deletes a small test file there and shows **Folder OK** — or the exact
+  problem. **Check folder access** repeats that test. If the folder was moved,
+  renamed or deleted after you chose it, click **Change folder** and pick it
+  again.
+- The version number next to the title tells you which copy is open. If it is
+  older than the one you just downloaded, the browser is opening an old copy
+  from somewhere else.
 
-## If you see "Could not save: A requested file or directory could not be found"
+### File names
 
-That is Windows refusing a path longer than about 260 characters — it happens
-when your library folder sits deep inside OneDrive and the email has a long
-subject or many recipients. The tool now keeps every name short, and if Windows
-still refuses it automatically retries with a 40-character folder name and
-`email.md`, then tells you it did so. If even that fails, move your email home
-folder closer to the top of the drive (for example `C:\Emails`), click
-**Change folder** to pick it, and try again.
+Chrome refuses some names when writing to a real folder, so the tool adjusts
+them just enough to be accepted: invisible characters and `~` at the start or
+end are removed, other `~` become `-`, `CON`/`NUL`-style names get a leading
+`_` (`_CON.txt`), and the extensions Chrome blocks (`.url`, `.lnk`, `.ini`,
+`.dll`, `.cfg`, `.manifest`, `.scf`) get a trailing `_` (`Portal link.url_`).
+Everything else keeps its name.
+
+Folder names are kept short enough for Windows' 260-character path limit. If
+your email home folder sits very deep, the tool measures how much room is left
+and uses `Date_Subject` for the folder name instead of the long form.
 
 ## PDF fallback
 

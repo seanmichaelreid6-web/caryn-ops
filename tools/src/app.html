@@ -41,6 +41,11 @@
   #drop .big { font-size: 1.15rem; font-weight: 600; }
   #drop .hint { color: var(--muted); margin-top: .35rem; font-size: .95rem; }
   #drop input { display: none; }
+  #batchBar {
+    display: flex; align-items: center; gap: .6rem; flex-wrap: wrap; margin-top: 1.2rem;
+    background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: .7rem 1rem;
+  }
+  #batchBar #batchCount { font-weight: 600; margin-right: auto; }
   #results { margin-top: 1.4rem; display: flex; flex-direction: column; gap: .9rem; }
   .card {
     background: var(--card); border: 1px solid var(--border); border-radius: 12px;
@@ -110,6 +115,11 @@
     <input type="file" id="fileInput" accept=".eml,.msg,.zip,.pdf,message/rfc822,application/vnd.ms-outlook,application/zip,application/pdf" multiple>
   </label>
 
+  <div id="batchBar" style="display:none">
+    <span id="batchCount"></span>
+    <button id="saveAll" class="primary">Save all</button>
+    <button id="zipAll">Download all as one .zip</button>
+  </div>
   <div id="results"></div>
 
   <footer><b>New Outlook / Outlook on the web:</b> open the message and choose
@@ -145,7 +155,7 @@
 <script>
 "use strict";
 
-const TOOL_VERSION = "v5 (2026-09-29)";
+const TOOL_VERSION = "v6 (2026-09-29)";
 document.getElementById("version").textContent = TOOL_VERSION;
 console.log("Outlook Email → Markdown Archive " + TOOL_VERSION);
 
@@ -524,13 +534,43 @@ function buildMarkdown(subject, messages, preamble) {
 }
 
 /* ================= naming ================= */
-function sanitizeName(s) {
-  const cleaned = s
-    .replace(/[\\/:*?"<>|\u0000-\u001f]/g, " ")
+/* Chrome refuses some file and folder names when writing to a real folder
+ * (content/browser/file_system_access/file_system_access_manager_impl.cc,
+ * IsSafePathComponent, and base/i18n/file_util_icu.cc, IsFilenameLegal):
+ *  - control and invisible "format" characters, and the characters " * / : < > ? \ | anywhere
+ *  - whitespace, "." or "~" at the start or end (and "~" in short 8.3-style names on Windows)
+ *  - reserved device names (CON, NUL, COM1, ...) and desktop.ini / thumbs.db
+ *  - the extensions .lnk .scf .url, {CLSID} extensions, and the "dangerous"
+ *    types .cfg .dll .ini .manifest
+ * Every name this tool writes goes through legalName(), so none can be refused. */
+const BLOCKED_EXTS = new Set(["lnk", "scf", "url", "cfg", "dll", "ini", "manifest"]);
+const RESERVED_DEVICES = /^(con|prn|aux|nul|com[1-9]|lpt[1-9]|clock\$|conin\$|conout\$)$/i;
+function legalName(s, max) {
+  let n = [...String(s == null ? "" : s).normalize("NFC")]
+    .filter(ch => (ch.codePointAt(0) & 0xFFFE) !== 0xFFFE)
+    .join("")
+    .replace(/[\p{Cc}\p{Cf}\uFDD0-\uFDEF]/gu, "")
+    .replace(/[\\/:*?"<>|]/g, " ")
+    .replace(/^[\s.~]+|[\s.~]+$/g, "")
+    .replace(/~/g, "-")
     .replace(/\s+/g, " ")
-    .trim()
-    .replace(/[. ]+$/, "");
-  return (cleaned || "email").slice(0, 120).trim();
+    .replace(/^[\s.]+|[\s.]+$/g, "");
+  if (max && n.length > max) {
+    const cut = n.slice(0, max);
+    const space = cut.lastIndexOf(" ");
+    n = (space > max * 0.5 ? cut.slice(0, space) : cut).replace(/[\s.]+$/g, "");
+  }
+  if (!n) n = "untitled";
+  const stem = n.split(".")[0].replace(/[ .]+$/, "");
+  if (RESERVED_DEVICES.test(stem) || /^(desktop\.ini|thumbs\.db)$/i.test(n)) n = "_" + n;
+  const dot = n.lastIndexOf(".");
+  const ext = dot > 0 ? n.slice(dot + 1).toLowerCase() : "";
+  if (ext && (BLOCKED_EXTS.has(ext) || (ext.startsWith("{") && ext.endsWith("}")))) n += "_";
+  return n;
+}
+
+function sanitizeName(s) {
+  return legalName(s, 120);
 }
 
 function sanitizeAttachmentName(s) {
@@ -543,9 +583,9 @@ function uniqueAttachments(items, reservedNames) {
     let original = sanitizeAttachmentName(item.name || ("attachment-" + (index + 1)));
     const dot = original.lastIndexOf(".");
     const ext = dot > 0 ? original.slice(dot) : "";
-    const stem = clip(dot > 0 ? original.slice(0, dot) : original, Math.max(10, MAX_ATTACHMENT_NAME - ext.length));
-    let name = stem + ext, n = 2;
-    while (used.has(name.toLowerCase())) name = stem + " (" + n++ + ")" + ext;
+    const stem = legalName(dot > 0 ? original.slice(0, dot) : original, Math.max(10, MAX_ATTACHMENT_NAME - ext.length));
+    let name = legalName(stem + ext), n = 2;
+    while (used.has(name.toLowerCase())) name = legalName(stem + " (" + n++ + ")" + ext);
     used.add(name.toLowerCase());
     return { ...item, name, bytes: item.bytes instanceof Uint8Array ? item.bytes : new Uint8Array(item.bytes) };
   });
@@ -644,8 +684,14 @@ function clip(s, n) {
 
 // The Markdown file inside the folder gets a short name of its own instead of
 // repeating the folder name, which doubled the path length.
+// "Date_Subject", with the subject cleaned on its own first so a stray
+// character at its start doesn't survive in the middle of the name.
+function dateSubject(date, subject, max) {
+  return legalName(formatArchiveDate(date) + "_" + legalName(baseSubjectOf(subject)), max);
+}
+
 function markdownFileName(date, subject) {
-  return sanitizeName(clip(sanitizeName(formatArchiveDate(date) + "_" + baseSubjectOf(subject)), MAX_MD_NAME)) + ".md";
+  return dateSubject(date, subject, MAX_MD_NAME) + ".md";
 }
 
 function buildArchiveName(date, fromShort, recipientShorts, subject, attachmentCount) {
@@ -1040,7 +1086,7 @@ async function checkFolderAccess() {
   out.textContent = "Checking that files can be created in " + baseDir.name + "\u2026";
   try {
     await baseDir.entries().next();
-    const probe = "~access-test.txt";
+    const probe = "email-tool-access-check.txt";
     const fh = await baseDir.getFileHandle(probe, { create: true });
     const w = await fh.createWritable();
     await w.write("ok");
@@ -1131,29 +1177,27 @@ async function restoreFolder() {
   } catch (e) { /* stored handle unusable; user picks again */ }
 }
 
-async function saveIntoDirectory(parentDir, name, mdName, markdown, attachments, texts) {
-  const emailDir = await parentDir.getDirectoryHandle(name, { create: true });
-  const fileHandle = await emailDir.getFileHandle(mdName, { create: true });
-  const w = await fileHandle.createWritable();
-  await w.write(new Blob([markdown], { type: "text/markdown" }));
-  await w.close();
-  for (const attachment of attachments || []) {
-    const attachmentHandle = await emailDir.getFileHandle(attachment.name, { create: true });
-    const aw = await attachmentHandle.createWritable();
-    await aw.write(attachment.bytes);
-    await aw.close();
-  }
-  if (texts && texts.length) {
-    const textDir = await emailDir.getDirectoryHandle(TEXT_DIR, { create: true });
-    for (const t of texts) {
-      const th = await textDir.getFileHandle(t.name, { create: true });
-      const tw = await th.createWritable();
-      await tw.write(new Blob([t.markdown], { type: "text/markdown" }));
-      await tw.close();
-    }
+async function writeFileIn(dir, name, data) {
+  const fh = await dir.getFileHandle(name, { create: true });
+  const w = await fh.createWritable();
+  try {
+    await w.write(data);
+    await w.close();
+  } catch (e) {
+    try { await w.abort(); } catch (_) { /* already closed */ }
+    throw e;
   }
 }
 
+async function saveIntoDirectory(parentDir, name, mdName, markdown, attachments, texts) {
+  const emailDir = await parentDir.getDirectoryHandle(name, { create: true });
+  await writeFileIn(emailDir, mdName, new Blob([markdown], { type: "text/markdown" }));
+  for (const attachment of attachments || []) await writeFileIn(emailDir, attachment.name, attachment.bytes);
+  if (texts && texts.length) {
+    const textDir = await emailDir.getDirectoryHandle(TEXT_DIR, { create: true });
+    for (const t of texts) await writeFileIn(textDir, t.name, new Blob([t.markdown], { type: "text/markdown" }));
+  }
+}
 async function saveIntoFolder(category, name, mdName, markdown, attachments, texts) {
   const catDir = await baseDir.getDirectoryHandle(category, { create: true });
   await saveIntoDirectory(catDir, name, mdName, markdown, attachments, texts);
@@ -1185,31 +1229,36 @@ const budgetCache = new Map();
 async function measureNameBudget(catDir, category) {
   if (budgetCache.has(category)) return budgetCache.get(category);
   const tryLen = async n => {
-    const probe = "~probe-" + "x".repeat(Math.max(1, n - 7));
+    const probe = "email-tool-probe-" + "x".repeat(Math.max(1, n - 17));
     try {
       await catDir.getFileHandle(probe, { create: true });
       try { await catDir.removeEntry(probe); } catch (e) { /* best effort */ }
       return true;
     } catch (e) { return false; }
   };
-  let budget;
-  if (await tryLen(240)) {
-    budget = 240; // long paths allowed here (macOS, or Windows with long paths on)
-  } else {
-    let lo = 0, hi = 240;
-    while (hi - lo > 3) {
-      const mid = Math.floor((lo + hi) / 2);
-      if (await tryLen(mid)) lo = mid; else hi = mid;
+  // null = unknown: the folder refused even a short name, so the problem is not
+  // length. Names are then left alone and the real write reports the reason.
+  let budget = null;
+  if (await tryLen(40)) {
+    if (await tryLen(240)) {
+      budget = 240; // long paths allowed here
+    } else {
+      let lo = 40, hi = 240;
+      while (hi - lo > 3) {
+        const mid = Math.floor((lo + hi) / 2);
+        if (await tryLen(mid)) lo = mid; else hi = mid;
+      }
+      budget = lo;
     }
-    budget = lo;
+    budget -= 8; // Chrome writes each file through a temporary "<name>.crswap" beside it
   }
   budgetCache.set(category, budget);
   return budget;
 }
-
 // Shrink the folder name (and, if needed, the Markdown file name) so that
 // folder + "/" + the deepest file this save creates fits the measured budget.
 function fitToBudget(result, name, budget) {
+  if (budget == null) return { folder: name, mdName: result.mdName, shortened: false };
   const innerNoMd = Math.max(0,
     ...result.attachments.map(a => a.name.length),
     ...(result.attachmentTexts || []).map(t => TEXT_DIR.length + 1 + t.name.length));
@@ -1220,7 +1269,10 @@ function fitToBudget(result, name, budget) {
     folderCap = budget - 1 - Math.max(innerNoMd, mdName.length);
   }
   if (folderCap < 24) return null; // hopeless: the library folder itself is too deep
-  const folder = name.length <= folderCap ? name : sanitizeName(clip(name, folderCap));
+  // When the full name does not fit, "Date_Subject" says far more than a
+  // chopped "Date_From X_To" would.
+  const folder = name.length <= folderCap ? name
+    : dateSubject(result.date, result.subject, folderCap);
   return { folder, mdName, shortened: folder !== name || mdName !== result.mdName };
 }
 
@@ -1232,25 +1284,24 @@ async function saveResult(result, category, name) {
     (nText ? " (+ " + nText + " text version" + (nText === 1 ? "" : "s") + ")" : "") +
     " saved together. Listed in " + INDEX_FILE + ".";
   const ours = new Set([result.mdName, "email.md", TEXT_DIR, ...result.attachments.map(a => a.name)]);
-  const tooDeep = { ok: false, message: "Could not save: this location\u2019s path is too long for Windows even with " +
-    "short names. Move your email home folder closer to the top of the drive (for example C:\\Emails), " +
-    "click Change folder to pick it, and try again." };
+  const tooDeep = { ok: false, message: "the folder path is too long for Windows even with short names \u2014 moving " +
+    "your email home folder nearer the top of the drive (for example C:\\Emails) will fix this for good" };
   try {
     await baseDir.entries().next();
   } catch (e) {
-    return { ok: false, message: "Could not save: your email home folder (" + baseDir.name + ") can\u2019t be reached " +
-      "\u2014 it may have been moved, renamed or deleted since you chose it. Click Change folder and pick it again. (" +
+    return { ok: false, message: "your email home folder (" + baseDir.name + ") can\u2019t be reached \u2014 it may " +
+      "have been moved, renamed or deleted since you chose it; click Change folder and pick it again (" +
       describeError(e) + ")" };
   }
   let catDir;
   try {
     catDir = await baseDir.getDirectoryHandle(category, { create: true });
   } catch (e) {
-    return { ok: false, message: "Could not create or open the category folder \u201C" + category + "\u201D inside " +
-      baseDir.name + " (" + describeError(e) + "). Use Download as .zip to keep going." };
+    return { ok: false, message: "the category folder \u201C" + category + "\u201D could not be created or opened (" +
+      describeError(e) + ")" };
   }
-  let budget = 120;
-  try { budget = await measureNameBudget(catDir, category); } catch (e) { /* keep the default */ }
+  let budget = null;
+  try { budget = await measureNameBudget(catDir, category); } catch (e) { /* unknown */ }
   const fit = fitToBudget(result, name, budget);
   if (!fit) return tooDeep;
   try {
@@ -1260,12 +1311,15 @@ async function saveResult(result, category, name) {
       (fit.shortened ? " The name was shortened to fit this folder\u2019s path length (Windows allows " +
         budget + " more characters here)." : "") };
   } catch (e) {
-    if (!isPathError(e)) return { ok: false, message: "Could not save (" + describeError(e) + "). Use Download as .zip to keep going." };
+    if (!isPathError(e)) {
+      await removeIfOurs(catDir, fit.folder, ours);
+      return { ok: false, message: describeError(e) };
+    }
     await removeIfOurs(catDir, fit.folder, ours);
   }
   // Windows still refused: fall back to the shortest sensible names.
   await removeIfOurs(catDir, name, ours);
-  const shortName = sanitizeName(clip(sanitizeName(formatArchiveDate(result.date) + "_" + baseSubjectOf(result.subject)), 40));
+  const shortName = dateSubject(result.date, result.subject, 40);
   try {
     await saveIntoFolder(category, shortName, "email.md", result.markdown, result.attachments, result.attachmentTexts);
     await appendIndex(result, category, shortName);
@@ -1420,9 +1474,9 @@ async function extractAttachmentTexts(attachments) {
   for (const a of attachments || []) {
     const text = await attachmentToText(a);
     if (!text) continue;
-    const stem = clip(a.name.replace(/\.[^.]+$/, ""), MAX_TEXT_NAME - 3);
-    let file = stem + ".md", n = 2;
-    while (used.has(file.toLowerCase())) file = stem + " (" + n++ + ").md";
+    const stem = legalName(a.name.replace(/\.[^.]+$/, ""), MAX_TEXT_NAME - 3);
+    let file = legalName(stem + ".md"), n = 2;
+    while (used.has(file.toLowerCase())) file = legalName(stem + " (" + n++ + ").md");
     used.add(file.toLowerCase());
     texts.push({
       forName: a.name, name: file,
@@ -1575,8 +1629,8 @@ function showResult(card, result) {
   if (hasFolderApi) {
     saveBtn.disabled = false;
     status.textContent = baseDir
-      ? "Ready — pick a category."
-      : "Ready — choose your email home folder above.";
+      ? "Ready \u2014 pick a category and click Save (or Save all at the top)."
+      : "Ready \u2014 click Save to pick your email home folder, or Download as .zip.";
     status.classList.remove("busy");
   } else {
     saveBtn.textContent = "Download folder (.zip)";
@@ -1586,55 +1640,99 @@ function showResult(card, result) {
     status.classList.remove("busy");
   }
 
-  const zipEntriesFor = name => {
-    const data = new TextEncoder().encode(result.markdown);
-    const entries = [{ path: name + "/" + result.mdName, data }];
-    for (const a of result.attachments) entries.push({ path: name + "/" + a.name, data: a.bytes });
+  // Everything a zip needs for this email, laid out as category/folder/...
+  // so every zip, single or batch, is unpacked the same way: into the email
+  // home folder.
+  const zipEntriesFor = (name, category) => {
+    const base = legalName(category, 60) + "/" + legalName(name, 70) + "/";
+    const entries = [{ path: base + result.mdName, data: new TextEncoder().encode(result.markdown) }];
+    for (const a of result.attachments) entries.push({ path: base + a.name, data: a.bytes });
     for (const t of result.attachmentTexts || []) {
-      entries.push({ path: name + "/" + TEXT_DIR + "/" + t.name, data: new TextEncoder().encode(t.markdown) });
+      entries.push({ path: base + TEXT_DIR + "/" + t.name, data: new TextEncoder().encode(t.markdown) });
     }
     return entries;
   };
+  const homeLabel = () => (baseDir ? "\u201C" + baseDir.name + "\u201D" : "your email home folder");
+  const unzipHint = () => "Open it and drag the folder inside onto " + homeLabel() +
+    " (Windows merges it into the right category folder).";
+
+  const entry = {
+    card, result, saved: false,
+    name: () => sanitizeName(nameInput.value || result.name),
+    category: () => sel.value === "__new__" ? (localStorage.getItem("lastCategory") || PRESET_CATEGORIES[0]) : sel.value,
+    zipEntries: () => zipEntriesFor(entry.name(), entry.category()),
+    markSaved(message, newName) {
+      entry.saved = true;
+      if (newName && newName !== nameInput.value) nameInput.value = newName;
+      status.textContent = message;
+      status.classList.remove("busy");
+      saveBtn.textContent = "Saved \u2713";
+      updateBatchBar();
+    },
+    markZipped(zipName, reason) {
+      entry.saved = true;
+      status.textContent = (reason
+        ? "Couldn\u2019t write into your folder (" + reason + "), so this email was downloaded instead as "
+        : "Downloaded as ") + zipName + ". " + unzipHint();
+      status.classList.remove("busy");
+      saveBtn.textContent = "Downloaded \u2713";
+      if (reason) attachCopyButton(card, result, entry.category(), entry.name(), { name: "SaveFailed", message: reason });
+      updateBatchBar();
+    },
+    // Folder first; on any failure the caller falls back to a zip.
+    async trySaveToFolder() {
+      const category = entry.category();
+      localStorage.setItem("lastCategory", category);
+      try {
+        const outcome = await saveResult(result, category, entry.name());
+        return outcome;
+      } catch (e) {
+        return { ok: false, message: describeError(e) };
+      }
+    },
+  };
+  readyEntries.push(entry);
+  updateBatchBar();
+
   card.querySelector("button.dlzip").addEventListener("click", () => {
-    const name = sanitizeName(nameInput.value || result.name);
-    download(name + ".zip", makeZip(zipEntriesFor(name)));
-    status.textContent = "Downloaded " + name + ".zip \u2014 unzip it inside your \u201C" + sel.value +
-      "\u201D folder to get the same result as Save to folder.";
-    status.classList.remove("busy");
+    const zipName = entry.name() + ".zip";
+    download(zipName, makeZip(entry.zipEntries()));
+    entry.markZipped(zipName, null);
   });
 
   saveBtn.addEventListener("click", () => {
-    const name = sanitizeName(nameInput.value || result.name);
-    saveClick(name).catch(e => showSaveError(status, card, result, sel.value, name, e));
+    saveOne().catch(e => showSaveError(status, card, result, sel.value, entry.name(), e));
   });
-  async function saveClick(name) {
-    let category = sel.value;
-    if (category === "__new__") {
-      category = (window.prompt("Name the new category folder:") || "").trim();
+  async function saveOne() {
+    if (sel.value === "__new__") {
+      let category = (window.prompt("Name the new category folder:") || "").trim();
       if (!category) return;
-      category = sanitizeName(category);
+      category = legalName(category, 60);
       if (!existingCategories.includes(category)) existingCategories.push(category);
       document.querySelectorAll("select.category").forEach(fillCategorySelect);
       sel.value = category;
     }
     if (hasFolderApi && !baseDir) {
       await chooseFolder();
-      if (!baseDir) return;
-    }
-    localStorage.setItem("lastCategory", category);
-    if (hasFolderApi && baseDir) {
-      const outcome = await saveResult(result, category, name);
-      status.textContent = outcome.message;
-      if (outcome.ok) {
-        if (outcome.name !== name) nameInput.value = outcome.name;
-      } else {
+      if (!baseDir) {
+        status.textContent = "No folder was chosen. Click Save again to pick your email home folder, " +
+          "or use Download as .zip.";
         status.classList.add("busy");
-        attachCopyButton(card, result, category, name, { name: "SaveFailed", message: outcome.message });
+        return;
       }
+    }
+    status.textContent = "Saving\u2026";
+    status.classList.add("busy");
+    if (hasFolderApi && baseDir) {
+      const outcome = await entry.trySaveToFolder();
+      if (outcome.ok) { entry.markSaved(outcome.message, outcome.name); return; }
+      const zipName = entry.name() + ".zip";
+      download(zipName, makeZip(entry.zipEntries()));
+      entry.markZipped(zipName, outcome.message);
     } else {
-      download(name + ".zip", makeZip(zipEntriesFor(name)));
-      status.textContent = "Downloaded " + name + ".zip \u2014 unzip it inside your \u201C" +
-        category + "\u201D folder.";
+      const zipName = entry.name() + ".zip";
+      download(zipName, makeZip(entry.zipEntries()));
+      entry.markZipped(zipName, null);
     }
   }
   card.querySelector("button.dlmd").addEventListener("click", () =>
@@ -1651,6 +1749,62 @@ function showResult(card, result) {
     div.textContent = w;
     warnEl.appendChild(div);
   }
+}
+
+/* ================= batch: Save all / Download all ================= */
+const readyEntries = [];
+function updateBatchBar() {
+  const pending = readyEntries.filter(e => !e.saved).length;
+  const bar = document.getElementById("batchBar");
+  bar.style.display = readyEntries.length ? "flex" : "none";
+  document.getElementById("batchCount").textContent = pending
+    ? pending + " email" + (pending === 1 ? "" : "s") + " ready to save"
+    : "All emails saved";
+  document.getElementById("saveAll").disabled = !pending;
+}
+
+function batchZipName() {
+  const d = new Date();
+  const pad = n => String(n).padStart(2, "0");
+  return "Emails " + d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate()) + " " +
+    pad(d.getHours()) + pad(d.getMinutes()) + ".zip";
+}
+
+async function saveAll() {
+  const btn = document.getElementById("saveAll");
+  btn.disabled = true;
+  const pending = readyEntries.filter(e => !e.saved);
+  if (hasFolderApi && !baseDir) await chooseFolder();
+  const toZip = [];
+  let saved = 0, reason = null;
+  for (const entry of pending) {
+    if (hasFolderApi && baseDir && !reason) {
+      const outcome = await entry.trySaveToFolder();
+      if (outcome.ok) { entry.markSaved(outcome.message, outcome.name); saved++; continue; }
+      reason = outcome.message; // stop trying the folder; the rest go into one zip
+    }
+    toZip.push(entry);
+  }
+  if (toZip.length) {
+    const zipName = batchZipName();
+    download(zipName, makeZip(toZip.flatMap(e => e.zipEntries())));
+    for (const e of toZip) e.markZipped(zipName, reason);
+  }
+  const summary = document.getElementById("batchCount");
+  summary.textContent = (saved ? saved + " saved to your folder" : "") +
+    (saved && toZip.length ? " \u00b7 " : "") +
+    (toZip.length ? toZip.length + " downloaded in one .zip \u2014 drag its contents onto " +
+      (baseDir ? "\u201C" + baseDir.name + "\u201D" : "your email home folder") : "");
+  btn.disabled = !readyEntries.some(e => !e.saved);
+}
+
+async function zipAll() {
+  const pending = readyEntries.filter(e => !e.saved);
+  const list = pending.length ? pending : readyEntries;
+  if (!list.length) return;
+  const zipName = batchZipName();
+  download(zipName, makeZip(list.flatMap(e => e.zipEntries())));
+  for (const e of list) e.markZipped(zipName, null);
 }
 
 async function handleFiles(fileList) {
@@ -1736,6 +1890,10 @@ drop.addEventListener("drop", e => {
 fileInput.addEventListener("change", () => { handleFiles(fileInput.files); fileInput.value = ""; });
 document.getElementById("chooseFolder").addEventListener("click", chooseFolder);
 document.getElementById("checkFolder").addEventListener("click", checkFolderAccess);
+document.getElementById("saveAll").addEventListener("click", () => saveAll().catch(e => {
+  document.getElementById("batchCount").textContent = "Save all stopped: " + describeError(e);
+}));
+document.getElementById("zipAll").addEventListener("click", () => zipAll());
 
 refreshCategories(); // presets are available even before a folder is connected
 if (!hasFolderApi) {
