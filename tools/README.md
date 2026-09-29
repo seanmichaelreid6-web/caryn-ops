@@ -143,6 +143,24 @@ such links under "Cloud links in this email" so you can download them by hand.
 A scanned PDF attachment has no text inside it; the original is still saved and
 the tool tells you no text version could be made.
 
+## If Save to folder does not work
+
+- The moment you choose or reconnect your email home folder, the tool creates
+  and deletes a small test file there and shows **Folder OK** — or the exact
+  problem. **Check folder access** repeats that test any time.
+- If the folder was moved, renamed or deleted after you chose it, the tool's
+  saved link to it is dead. The message says so; click **Change folder** and
+  pick it again.
+- Every error is shown on the card with its name and message, and a **Copy
+  error details** button puts a report on the clipboard you can paste when
+  asking for help.
+- **Download as .zip** on every card gives you the same folder (Markdown,
+  attachments, text versions) as a zip file, whatever the browser can or
+  cannot do. Unzip it inside the category folder.
+- The version number next to the title tells you which copy of the tool is
+  open; if it is older than the one you just downloaded, the browser is
+  opening an old copy from a different location.
+
 ## If you see "Could not save: A requested file or directory could not be found"
 
 That is Windows refusing a path longer than about 260 characters — it happens

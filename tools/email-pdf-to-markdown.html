@@ -97,9 +97,11 @@
     <span class="name" id="folderName">not chosen yet</span>
     <button id="chooseFolder" class="primary">Choose folder</button>
     <button id="reconnectFolder" style="display:none">Reconnect to folder</button>
+    <button id="checkFolder" style="display:none">Check folder access</button>
     <span class="hint" id="folderHint">Pick the folder that holds your category folders
     (Everest Emails, Billing Emails, and so on) — for example a folder on your Desktop.
     You only do this once.</span>
+    <span class="hint" id="folderCheck"></span>
   </div>
 
   <label id="drop">
@@ -928,7 +930,7 @@ else if (typeof exports === 'object')
 <script>
 "use strict";
 
-const TOOL_VERSION = "v4 (2026-09-29)";
+const TOOL_VERSION = "v5 (2026-09-29)";
 document.getElementById("version").textContent = TOOL_VERSION;
 console.log("Outlook Email → Markdown Archive " + TOOL_VERSION);
 
@@ -1811,6 +1813,79 @@ async function setBaseDir(handle) {
   await loadIndex();
   document.querySelectorAll("button.save").forEach(b => { b.disabled = false; });
   idb.set("baseDir", handle);
+  document.getElementById("checkFolder").style.display = "inline-block";
+  await checkFolderAccess();
+}
+
+// Proves the chosen folder is really writable right now, and says so on screen.
+async function checkFolderAccess() {
+  const out = document.getElementById("folderCheck");
+  if (!baseDir) { out.textContent = ""; return false; }
+  out.style.color = "";
+  out.textContent = "Checking that files can be created in " + baseDir.name + "\u2026";
+  try {
+    await baseDir.entries().next();
+    const probe = "~access-test.txt";
+    const fh = await baseDir.getFileHandle(probe, { create: true });
+    const w = await fh.createWritable();
+    await w.write("ok");
+    await w.close();
+    try { await baseDir.removeEntry(probe); } catch (e) { /* best effort */ }
+    out.style.color = "var(--ok)";
+    out.textContent = "Folder OK \u2014 files can be created in " + baseDir.name + ".";
+    return true;
+  } catch (e) {
+    out.style.color = "var(--err)";
+    out.textContent = "Problem with this folder: " + describeError(e) +
+      (e && e.name === "NotFoundError"
+        ? " The folder may have been moved, renamed or deleted since you chose it \u2014 click Change folder and pick it again."
+        : " Try Change folder and pick a folder on your own PC (for example one on your Desktop or in Documents).");
+    return false;
+  }
+}
+
+function describeError(e) {
+  if (!e) return "unknown error";
+  const name = e.name && e.name !== "Error" ? e.name + ": " : "";
+  return name + (e.message || String(e));
+}
+
+function diagnosticReport(result, category, name, e) {
+  const lines = [
+    "Outlook Email \u2192 Markdown Archive " + TOOL_VERSION,
+    "When: " + new Date().toString(),
+    "Browser: " + navigator.userAgent,
+    "Folder API available: " + hasFolderApi,
+    "Home folder: " + (baseDir ? baseDir.name : "(none)"),
+    "Category: " + category,
+    "Folder name (" + name.length + " chars): " + name,
+    "Markdown file: " + (result.mdName || ""),
+    "Attachments: " + result.attachments.map(a => a.name + " (" + a.name.length + ")").join("; "),
+    "Error name: " + (e && e.name),
+    "Error message: " + (e && e.message),
+    "Stack: " + (e && e.stack ? String(e.stack).split("\n").slice(0, 4).join(" | ") : ""),
+  ];
+  return lines.join("\n");
+}
+
+function showSaveError(status, card, result, category, name, e) {
+  status.textContent = "Could not save (" + describeError(e) + "). Use Download as .zip to keep going, " +
+    "and click Copy error details to send them to Claude.";
+  status.classList.add("busy");
+  attachCopyButton(card, result, category, name, e);
+}
+
+function attachCopyButton(card, result, category, name, e) {
+  if (card.querySelector("button.copyerr")) return;
+  const btn = document.createElement("button");
+  btn.className = "copyerr";
+  btn.textContent = "Copy error details";
+  btn.addEventListener("click", async () => {
+    const text = diagnosticReport(result, category, name, e);
+    try { await navigator.clipboard.writeText(text); btn.textContent = "Copied \u2713"; }
+    catch (err) { window.prompt("Copy these details:", text); }
+  });
+  card.querySelector(".saverow").appendChild(btn);
 }
 
 async function chooseFolder() {
@@ -1945,8 +2020,22 @@ async function saveResult(result, category, name) {
   const tooDeep = { ok: false, message: "Could not save: this location\u2019s path is too long for Windows even with " +
     "short names. Move your email home folder closer to the top of the drive (for example C:\\Emails), " +
     "click Change folder to pick it, and try again." };
-  const catDir = await baseDir.getDirectoryHandle(category, { create: true });
-  const budget = await measureNameBudget(catDir, category);
+  try {
+    await baseDir.entries().next();
+  } catch (e) {
+    return { ok: false, message: "Could not save: your email home folder (" + baseDir.name + ") can\u2019t be reached " +
+      "\u2014 it may have been moved, renamed or deleted since you chose it. Click Change folder and pick it again. (" +
+      describeError(e) + ")" };
+  }
+  let catDir;
+  try {
+    catDir = await baseDir.getDirectoryHandle(category, { create: true });
+  } catch (e) {
+    return { ok: false, message: "Could not create or open the category folder \u201C" + category + "\u201D inside " +
+      baseDir.name + " (" + describeError(e) + "). Use Download as .zip to keep going." };
+  }
+  let budget = 120;
+  try { budget = await measureNameBudget(catDir, category); } catch (e) { /* keep the default */ }
   const fit = fitToBudget(result, name, budget);
   if (!fit) return tooDeep;
   try {
@@ -1956,7 +2045,7 @@ async function saveResult(result, category, name) {
       (fit.shortened ? " The name was shortened to fit this folder\u2019s path length (Windows allows " +
         budget + " more characters here)." : "") };
   } catch (e) {
-    if (!isPathError(e)) return { ok: false, message: "Could not save: " + (e.message || e) };
+    if (!isPathError(e)) return { ok: false, message: "Could not save (" + describeError(e) + "). Use Download as .zip to keep going." };
     await removeIfOurs(catDir, fit.folder, ours);
   }
   // Windows still refused: fall back to the shortest sensible names.
@@ -2235,6 +2324,7 @@ function addCard(file) {
     "<div class='saverow' style='display:none'>" +
       "<label>Save into:</label> <select class='category'></select>" +
       "<button class='primary save'>Save to folder</button>" +
+      "<button class='dlzip'>Download as .zip</button>" +
       "<button class='dlmd'>Download .md only</button>" +
     "</div>" +
     "<div class='status busy'>Starting\u2026</div>" +
@@ -2275,13 +2365,34 @@ function showResult(card, result) {
     status.classList.remove("busy");
   } else {
     saveBtn.textContent = "Download folder (.zip)";
+    card.querySelector("button.dlzip").style.display = "none";
     saveBtn.disabled = false;
     status.textContent = "This browser can't write folders directly — the zip expands into the email's folder.";
     status.classList.remove("busy");
   }
 
-  saveBtn.addEventListener("click", async () => {
+  const zipEntriesFor = name => {
+    const data = new TextEncoder().encode(result.markdown);
+    const entries = [{ path: name + "/" + result.mdName, data }];
+    for (const a of result.attachments) entries.push({ path: name + "/" + a.name, data: a.bytes });
+    for (const t of result.attachmentTexts || []) {
+      entries.push({ path: name + "/" + TEXT_DIR + "/" + t.name, data: new TextEncoder().encode(t.markdown) });
+    }
+    return entries;
+  };
+  card.querySelector("button.dlzip").addEventListener("click", () => {
     const name = sanitizeName(nameInput.value || result.name);
+    download(name + ".zip", makeZip(zipEntriesFor(name)));
+    status.textContent = "Downloaded " + name + ".zip \u2014 unzip it inside your \u201C" + sel.value +
+      "\u201D folder to get the same result as Save to folder.";
+    status.classList.remove("busy");
+  });
+
+  saveBtn.addEventListener("click", () => {
+    const name = sanitizeName(nameInput.value || result.name);
+    saveClick(name).catch(e => showSaveError(status, card, result, sel.value, name, e));
+  });
+  async function saveClick(name) {
     let category = sel.value;
     if (category === "__new__") {
       category = (window.prompt("Name the new category folder:") || "").trim();
@@ -2303,19 +2414,14 @@ function showResult(card, result) {
         if (outcome.name !== name) nameInput.value = outcome.name;
       } else {
         status.classList.add("busy");
+        attachCopyButton(card, result, category, name, { name: "SaveFailed", message: outcome.message });
       }
     } else {
-      const data = new TextEncoder().encode(result.markdown);
-      const entries = [{ path: name + "/" + result.mdName, data }];
-      for (const a of result.attachments) entries.push({ path: name + "/" + a.name, data: a.bytes });
-      for (const t of result.attachmentTexts || []) {
-        entries.push({ path: name + "/" + TEXT_DIR + "/" + t.name, data: new TextEncoder().encode(t.markdown) });
-      }
-      download(name + ".zip", makeZip(entries));
+      download(name + ".zip", makeZip(zipEntriesFor(name)));
       status.textContent = "Downloaded " + name + ".zip \u2014 unzip it inside your \u201C" +
         category + "\u201D folder.";
     }
-  });
+  }
   card.querySelector("button.dlmd").addEventListener("click", () =>
     download(sanitizeName(nameInput.value || result.name) + ".md", result.markdown));
 
@@ -2414,6 +2520,7 @@ drop.addEventListener("drop", e => {
 });
 fileInput.addEventListener("change", () => { handleFiles(fileInput.files); fileInput.value = ""; });
 document.getElementById("chooseFolder").addEventListener("click", chooseFolder);
+document.getElementById("checkFolder").addEventListener("click", checkFolderAccess);
 
 refreshCategories(); // presets are available even before a folder is connected
 if (!hasFolderApi) {
