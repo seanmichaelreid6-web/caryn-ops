@@ -21,6 +21,7 @@
   }
   main { max-width: 820px; margin: 0 auto; }
   h1 { font-size: 1.6rem; margin: 0 0 .25rem; }
+  h1 .ver { font-size: .8rem; font-weight: 500; color: var(--muted); margin-left: .5rem; vertical-align: middle; }
   .sub { color: var(--muted); margin: 0 0 1.2rem; }
   #folderBar {
     display: flex; align-items: center; gap: .8rem; flex-wrap: wrap;
@@ -82,7 +83,7 @@
 </style>
 
 <main>
-  <h1>Outlook Email &rarr; Markdown Archive</h1>
+  <h1>Outlook Email &rarr; Markdown Archive <span class="ver" id="version"></span></h1>
   <p class="sub">Save or drag an email out of Outlook, then drop the resulting
   <b>.eml</b> or <b>.msg</b> file here &mdash; or a whole <b>.zip</b> of them. The tool
   creates a named folder containing the Markdown email, every real attachment, and a
@@ -141,6 +142,10 @@
 
 <script>
 "use strict";
+
+const TOOL_VERSION = "v4 (2026-09-29)";
+document.getElementById("version").textContent = TOOL_VERSION;
+console.log("Outlook Email → Markdown Archive " + TOOL_VERSION);
 
 /* ================= pdf.js setup ================= */
 pdfjsLib.GlobalWorkerOptions.workerSrc = URL.createObjectURL(
@@ -1095,6 +1100,55 @@ async function removeIfOurs(parentDir, name, ourNames) {
   } catch (e) { return false; }
 }
 
+/* Windows rejects paths beyond ~260 characters, and a web page cannot see the
+ * folder's absolute path. So the tool measures: it creates (and deletes) probe
+ * files with ever longer names inside the category folder until Windows
+ * refuses one. The longest name that works is the budget for
+ * "email folder/deepest file" under that category. Measured once per category
+ * per session. */
+const budgetCache = new Map();
+async function measureNameBudget(catDir, category) {
+  if (budgetCache.has(category)) return budgetCache.get(category);
+  const tryLen = async n => {
+    const probe = "~probe-" + "x".repeat(Math.max(1, n - 7));
+    try {
+      await catDir.getFileHandle(probe, { create: true });
+      try { await catDir.removeEntry(probe); } catch (e) { /* best effort */ }
+      return true;
+    } catch (e) { return false; }
+  };
+  let budget;
+  if (await tryLen(240)) {
+    budget = 240; // long paths allowed here (macOS, or Windows with long paths on)
+  } else {
+    let lo = 0, hi = 240;
+    while (hi - lo > 3) {
+      const mid = Math.floor((lo + hi) / 2);
+      if (await tryLen(mid)) lo = mid; else hi = mid;
+    }
+    budget = lo;
+  }
+  budgetCache.set(category, budget);
+  return budget;
+}
+
+// Shrink the folder name (and, if needed, the Markdown file name) so that
+// folder + "/" + the deepest file this save creates fits the measured budget.
+function fitToBudget(result, name, budget) {
+  const innerNoMd = Math.max(0,
+    ...result.attachments.map(a => a.name.length),
+    ...(result.attachmentTexts || []).map(t => TEXT_DIR.length + 1 + t.name.length));
+  let mdName = result.mdName;
+  let folderCap = budget - 1 - Math.max(innerNoMd, mdName.length);
+  if (folderCap < 24) {
+    mdName = "email.md";
+    folderCap = budget - 1 - Math.max(innerNoMd, mdName.length);
+  }
+  if (folderCap < 24) return null; // hopeless: the library folder itself is too deep
+  const folder = name.length <= folderCap ? name : sanitizeName(clip(name, folderCap));
+  return { folder, mdName, shortened: folder !== name || mdName !== result.mdName };
+}
+
 async function saveResult(result, category, name) {
   const where = (baseDir.name ? baseDir.name + " \u203a " : "") + category + " \u203a ";
   const nAtt = result.attachments.length;
@@ -1103,16 +1157,24 @@ async function saveResult(result, category, name) {
     (nText ? " (+ " + nText + " text version" + (nText === 1 ? "" : "s") + ")" : "") +
     " saved together. Listed in " + INDEX_FILE + ".";
   const ours = new Set([result.mdName, "email.md", TEXT_DIR, ...result.attachments.map(a => a.name)]);
+  const tooDeep = { ok: false, message: "Could not save: this location\u2019s path is too long for Windows even with " +
+    "short names. Move your email home folder closer to the top of the drive (for example C:\\Emails), " +
+    "click Change folder to pick it, and try again." };
+  const catDir = await baseDir.getDirectoryHandle(category, { create: true });
+  const budget = await measureNameBudget(catDir, category);
+  const fit = fitToBudget(result, name, budget);
+  if (!fit) return tooDeep;
   try {
-    await saveIntoFolder(category, name, result.mdName, result.markdown, result.attachments, result.attachmentTexts);
-    await appendIndex(result, category, name);
-    return { ok: true, name, message: "Saved: " + where + name + summary };
+    await saveIntoFolder(category, fit.folder, fit.mdName, result.markdown, result.attachments, result.attachmentTexts);
+    await appendIndex(result, category, fit.folder);
+    return { ok: true, name: fit.folder, message: "Saved: " + where + fit.folder + summary +
+      (fit.shortened ? " The name was shortened to fit this folder\u2019s path length (Windows allows " +
+        budget + " more characters here)." : "") };
   } catch (e) {
     if (!isPathError(e)) return { ok: false, message: "Could not save: " + (e.message || e) };
+    await removeIfOurs(catDir, fit.folder, ours);
   }
-  // The full path was too long for Windows. Clear whatever the failed attempt
-  // created, then retry with a much shorter folder name and a fixed file name.
-  const catDir = await baseDir.getDirectoryHandle(category, { create: true });
+  // Windows still refused: fall back to the shortest sensible names.
   await removeIfOurs(catDir, name, ours);
   const shortName = sanitizeName(clip(sanitizeName(formatArchiveDate(result.date) + "_" + baseSubjectOf(result.subject)), 40));
   try {
@@ -1122,9 +1184,7 @@ async function saveResult(result, category, name) {
       " The full name was too long for Windows, so a shorter folder name was used." };
   } catch (e) {
     await removeIfOurs(catDir, shortName, ours);
-    return { ok: false, message: "Could not save: this location\u2019s path is too long for Windows even with a " +
-      "short folder name. Move your email home folder closer to the top of the drive (for example " +
-      "C:\\Emails), click Change folder to pick it, and try again." };
+    return tooDeep;
   }
 }
 
